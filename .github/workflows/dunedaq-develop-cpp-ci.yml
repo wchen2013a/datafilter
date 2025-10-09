@@ -1,0 +1,93 @@
+name: build-dunedaq-datafilter-v5
+
+on:
+  push:
+    branches: 
+      - develop
+      - patch/*
+      - prep-release/*
+    paths-ignore:
+      - 'docs/**'
+      - '.github/**'
+  pull_request:
+    branches:
+      - develop
+      - patch/*
+      - prep-release/*
+  schedule:
+    - cron: "05 23 * * *"
+  workflow_dispatch:
+
+jobs:
+  build_dunedaq_v5:
+    name: Build DUNEDAQ DataFilter V5 with dependencies
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake git
+          # Add any other required system dependencies here
+      
+      - name: Clone DUNEDAQ repositories
+        run: 
+          mkdir -p test-area
+          NFD_PROD5_V="fddaq-v5.3.2-rc3-a9" 
+          DUNE_DAQ_release=$NFD_PROD5_V 
+          INSTALL_DIR=$HOME/test-area/dune-v5-spack-datafilter-integration-test
+          source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
+          source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
+          setup_dbt latest
+          dbt-create -b candidate $DUNE_DAQ_release $INSTALL_DIR/ 
+          git clone https://github.com/DUNE-DAQ/daqsystemtest.git
+          git clone https://github.com/DUNE-DAQ/fddaqconf.git -b coredaq-v5.4.3
+          git clone https://github.com/DUNE-DAQ/hdf5libs.git -b develop
+          git clone https://github.com/DUNE-DAQ/detdataformats.git
+          git clone https://github.com/DUNE-DAQ/fddetdataformats.git
+          git clone https://github.com/DUNE-DAQ/datafilter.git -b develop
+          git clone https://github.com/DUNE-DAQ/appfwk.git
+      
+      - name: Checkout specific commits
+        run: |
+          cd fddaqconf
+          git checkout 0575bb1ade1632c2679f4c33ca499a1dbf8175a1
+          cd ..
+          cd appfwk
+          git checkout 1f8ce77ccdf23b8e068b8096218cfb26dd87d80e
+          cd ..
+          
+          cd hdf5libs
+          git checkout e1dc1f0b19bd64dbae5a36f5f525d70d4de4f6cb
+          cd ..
+          
+          cd fddetdataformats
+          git checkout 240f71fe8391a7d04db048f111e182ee8313de34
+          cd ..
+      
+      - name: Setup DBT environment and build
+        run: |
+          source dbt-env.sh
+          dbt-workarea-env
+          dbt-build -j$(nproc)
+      
+      - name: Run tests (optional)
+        run: |
+          source dbt-env.sh
+          dbt-workarea-env
+          # Add your test commands here
+          # dbt-test or other test commands
+        continue-on-error: true
+      
+      - name: Archive build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            build/
+            log/
+          retention-days: 7
