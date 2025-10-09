@@ -36,6 +36,7 @@ jobs:
       - name: Clone DUNEDAQ repositories
         run: 
           mkdir -p test-area
+          ls
           NFD_PROD5_V="fddaq-v5.3.2-rc3-a9" 
           DUNE_DAQ_release=$NFD_PROD5_V 
           INSTALL_DIR=$HOME/test-area/dune-v5-spack-datafilter-integration-test
@@ -44,11 +45,11 @@ jobs:
           setup_dbt latest
           dbt-create -b candidate $DUNE_DAQ_release $INSTALL_DIR/ 
           git clone https://github.com/DUNE-DAQ/daqsystemtest.git
-          git clone https://github.com/DUNE-DAQ/fddaqconf.git -b coredaq-v5.4.3
-          git clone https://github.com/DUNE-DAQ/hdf5libs.git -b develop
+          git clone https://github.com/DUNE-DAQ/fddaqconf.git 
+          git clone https://github.com/DUNE-DAQ/hdf5libs.git 
           git clone https://github.com/DUNE-DAQ/detdataformats.git
           git clone https://github.com/DUNE-DAQ/fddetdataformats.git
-          git clone https://github.com/DUNE-DAQ/datafilter.git -b develop
+          git clone https://github.com/DUNE-DAQ/datafilter.git 
           git clone https://github.com/DUNE-DAQ/appfwk.git
       
       - name: Checkout specific commits
