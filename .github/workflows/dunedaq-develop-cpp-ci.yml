@@ -15,7 +15,7 @@ on:
       - patch/*
       - prep-release/*
   schedule:
-    - cron: "05 23 * * *"
+    - cron: "08 22 * * *"
   workflow_dispatch:
 
 jobs:
