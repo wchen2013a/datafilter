@@ -1,4 +1,4 @@
-name: build-dunedaq-datafilter-v5
+name: build-develop-datafilter
 
 on:
   push:
@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build_dunedaq_v5:
+  build_against_dev_release:
     name: Build DUNEDAQ DataFilter V5 with dependencies
     runs-on: ubuntu-latest
     strategy:
