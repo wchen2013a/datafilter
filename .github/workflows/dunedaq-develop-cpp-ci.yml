@@ -25,7 +25,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: "dunedaq/alma9-minimal:dev"
+          - image: "dunedaq/al9-minimal:dev"
             os_name: "alma9"
             link: "last_successful_alma9"
     container:
