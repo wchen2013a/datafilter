@@ -22,6 +22,19 @@ jobs:
   build_dunedaq_v5:
     name: Build DUNEDAQ DataFilter V5 with dependencies
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: "dunedaq/alma9-minimal:dev"
+            os_name: "alma9"
+            link: "last_successful_alma9"
+    container:
+      image: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      DBT_AREA_FILE: "dbt-settings"
     
     steps:
       - name: Checkout repository
@@ -32,7 +45,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake git
           # Add any other required system dependencies here
-      
+      - name: setup dev area
+        run: 
+          source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
+          source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
       - name: Clone DUNEDAQ repositories
         run: 
           mkdir -p test-area
@@ -40,8 +56,6 @@ jobs:
           NFD_PROD5_V="fddaq-v5.3.2-rc3-a9" 
           DUNE_DAQ_release=$NFD_PROD5_V 
           INSTALL_DIR=$HOME/test-area/dune-v5-spack-datafilter-integration-test
-          source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
-          source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
           setup_dbt latest
           dbt-create -b candidate $DUNE_DAQ_release $INSTALL_DIR/ 
           git clone https://github.com/DUNE-DAQ/daqsystemtest.git
