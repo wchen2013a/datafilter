@@ -42,13 +42,18 @@ jobs:
       
       - name: setup dev area
         run: 
-          #source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
           source /cvmfs/dunedaq.opensciencegrid.org/tools/dbt/latest/env.sh
+          
           mkdir -p test-area
+          
           export NFD_PROD5_V="fddaq-v5.3.2-rc3-a9"
+          
           export DUNE_DAQ_release=$NFD_PROD5_V 
+          
           INSTALL_DIR=$HOME/test-area/dune-v5-spack-datafilter-integration-test
+          
           pwd
+          
           ls
           dbt-create -b candidate $DUNE_DAQ_release $INSTALL_DIR/ 
           #source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
