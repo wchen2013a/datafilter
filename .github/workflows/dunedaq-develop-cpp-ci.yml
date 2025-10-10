@@ -91,7 +91,7 @@ jobs:
           setup_dbt latest
           pwd 
           ls /cvmfs/dunedaq-development.opensciencegrid.org/
-          mkdir test-area
+          mkdir -p test-area
           dbt-create -b candidate fddaq-v5.3.2-rc3-a9 ./test-area
       
       - name: Setup build environment
