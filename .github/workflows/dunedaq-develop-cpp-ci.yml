@@ -75,8 +75,9 @@ jobs:
           mount -t cvmfs dunedaq-development.opensciencegrid.org /cvmfs/dunedaq-development.opensciencegrid.org || true
           
           # Verify CVMFS is mounted
+          echo "CVMFS mounted FS"
           ls -la /cvmfs/dunedaq.opensciencegrid.org/
-          ls /cvmfs/dunedaq-development.opensciencegrid.org/candidates
+          ls /cvmfs/dunedaq-development.opensciencegrid.org/
       
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -89,14 +90,17 @@ jobs:
           source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
           source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
           setup_dbt latest
-          echo "pwd"
+          echo "=> pwd"
           pwd 
-          echo "ls"
+          echo "=>ls dunedaq-development"
           ls /cvmfs/dunedaq-development.opensciencegrid.org/
           # need to remove it first
           rm -fr test-area
           dbt-create -b candidate fddaq-v5.3.2-rc3-a9 ./test-area
-      
+          echo "ls test-area"
+          ls test-area
+        continue-on-error: true
+        
       - name: Setup build environment
         run: |
           echo "pwd"
