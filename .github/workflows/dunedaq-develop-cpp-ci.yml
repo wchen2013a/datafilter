@@ -48,6 +48,8 @@ jobs:
           export NFD_PROD5_V="fddaq-v5.3.2-rc3-a9"
           export DUNE_DAQ_release=$NFD_PROD5_V 
           INSTALL_DIR=$HOME/test-area/dune-v5-spack-datafilter-integration-test
+          pwd
+          ls
           dbt-create -b candidate $DUNE_DAQ_release $INSTALL_DIR/ 
           #source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
       - name: setup build env, build and lint the repo against the development release
