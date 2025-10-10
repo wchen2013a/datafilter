@@ -148,8 +148,13 @@ jobs:
       
       - name: Run tests (optional)
         run: |
-          source dbt-env.sh
+          cd /__w/datafilter/datafilter/test-area
+          source env.sh
           dbt-workarea-env
+          which trdispatcher
+          which filterorchastor
+          which datafilter2
+          which filterresultwriter
           # Add your test commands here
           # dbt-test or other test commands
         continue-on-error: true
