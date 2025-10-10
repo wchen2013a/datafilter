@@ -82,10 +82,14 @@ jobs:
       
       - name: Setup dev area
         run: |
-          source /cvmfs/dunedaq.opensciencegrid.org/tools/dbt/latest/env.sh           
+          #source /cvmfs/dunedaq.opensciencegrid.org/tools/dbt/latest/env.sh           
+          source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
+          source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
+          setup_dbt latest
           pwd 
-          ls
-          dbt-create -b candidate fddaq-v5.3.2-rc3-a9 .
+          ls /cvmfs/dunedaq-development.opensciencegrid.org/candidates/fddaq-v5.3.2-rc3-a9/sourcecode
+          mkdir test-area
+          dbt-create -b candidate fddaq-v5.3.2-rc3-a9 ./test-area
       
       - name: Setup build environment
         run: |
