@@ -33,8 +33,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      DBT_AREA_FILE: "dbt-settings"
     
     steps:
       - name: Checkout repository
@@ -55,6 +53,7 @@ jobs:
           source dbt-env.sh
           dbt-workarea-env || true
           setup_repo_env="SETUP_$REPO"
+     
       - name: Clone DUNEDAQ repositories
         run: 
           mkdir -p test-area
