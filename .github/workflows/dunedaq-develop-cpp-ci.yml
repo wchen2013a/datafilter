@@ -44,23 +44,23 @@ jobs:
         run: 
           #source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
           source /cvmfs/dunedaq.opensciencegrid.org/tools/dbt/latest/env.sh
-          dbt-create.sh -c -n ${{ matrix.link }} dev-${{ matrix.os_name }}
+          mkdir -p test-area
+          export NFD_PROD5_V="fddaq-v5.3.2-rc3-a9"
+          export DUNE_DAQ_release=$NFD_PROD5_V 
+          INSTALL_DIR=$HOME/test-area/dune-v5-spack-datafilter-integration-test
+          dbt-create -b candidate $DUNE_DAQ_release $INSTALL_DIR/ 
           #source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
       - name: setup build env, build and lint the repo against the development release
         run: |
-          export REPO=$(echo '${{ github.repository }}' | awk -F '/' '{print $2}')
-          cd $GITHUB_WORKSPACE/dev-${{ matrix.os_name }}
+          #export REPO=$(echo '${{ github.repository }}' | awk -F '/' '{print $2}')
+          #cd $GITHUB_WORKSPACE/dev-${{ matrix.os_name }}
           source dbt-env.sh
           dbt-workarea-env || true
-          setup_repo_env="SETUP_$REPO"
+          #setup_repo_env="SETUP_$REPO"
      
       - name: Clone DUNEDAQ repositories
         run: 
-          mkdir -p test-area
           ls
-          NFD_PROD5_V="fddaq-v5.3.2-rc3-a9" 
-          DUNE_DAQ_release=$NFD_PROD5_V 
-          INSTALL_DIR=$HOME/test-area/dune-v5-spack-datafilter-integration-test
           setup_dbt latest
           dbt-create -b candidate $DUNE_DAQ_release $INSTALL_DIR/ 
           git clone https://github.com/DUNE-DAQ/daqsystemtest.git
