@@ -62,7 +62,7 @@ jobs:
           # Setup CVMFS
           mkdir -p /etc/cvmfs
           cat > /etc/cvmfs/default.local <<EOF
-          CVMFS_REPOSITORIES=dunedaq.opensciencegrid.org
+          CVMFS_REPOSITORIES=dunedaq.opensciencegrid.org,dunedaq-development.opensciencegrid.org
           CVMFS_HTTP_PROXY=DIRECT
           CVMFS_CLIENT_PROFILE=single
           CVMFS_QUOTA_LIMIT=10000
@@ -71,6 +71,7 @@ jobs:
           # Mount CVMFS
           mkdir -p /cvmfs/dunedaq.opensciencegrid.org
           mount -t cvmfs dunedaq.opensciencegrid.org /cvmfs/dunedaq.opensciencegrid.org || true
+          mount -t cvmfs dunedaq-development.opensciencegrid.org /cvmfs/dunedaq-development.opensciencegrid.org || true
           
           # Verify CVMFS is mounted
           ls -la /cvmfs/dunedaq.opensciencegrid.org/
