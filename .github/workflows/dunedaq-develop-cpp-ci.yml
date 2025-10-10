@@ -58,7 +58,7 @@ jobs:
             https://ecsft.cern.ch/dist/cvmfs/cvmfs-release/cvmfs-release-latest.noarch.rpm
           dnf install -y cvmfs cvmfs-config-default
           dnf install -y --allowerasing git wget curl cmake gcc-c++ make python3 python3-pip \
-             fuse fuse-libs attr gdb strace cpio
+             fuse fuse-libs attr gdb strace cpio which rpm-build
           
           # Setup CVMFS
           #mkdir -p /etc/cvmfs
@@ -100,10 +100,26 @@ jobs:
           git clone https://github.com/cvmfs/cvmfsexec
           cd cvmfsexec
           ./makedist osg
+
+          # Check what was created
+          ls -la
+
+                  
+          # Find the created tarball (it should match the pattern)
+          TARBALL=$(ls cvmfsexec-*.tar.gz 2>/dev/null | head -1)
+          
+          if [ -z "$TARBALL" ]; then
+            echo "ERROR: cvmfsexec tarball not created. Checking for errors..."
+            cat makedist.log || echo "No log file found"
+            exit 1
+          fi
+          
+          echo "Found tarball: $TARBALL"
           
           # Create installation directory
           mkdir -p /opt/cvmfsexec
-          tar -xzf cvmfsexec-*.tar.gz -C /opt/cvmfsexec
+          tar -xzf "$TARBALL" -C /opt/cvmfsexec --strip-components=1
+
           
           # Setup cvmfsexec for dunedaq repositories
           cd /opt/cvmfsexec
