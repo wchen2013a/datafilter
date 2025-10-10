@@ -1,62 +1,232 @@
-name: Build alma9-minimal docker image
+name: build-develop-datafilter-alma9
 
 on:
-  schedule:
-    - cron: "0 5 * * 2"
-
   push:
-    branches: [ develop ]
-    tags:
-      - 'v*'
-    paths:
-      - dockerfiles/alma9-minimal.dockerfile
-
+    branches: 
+      - develop
+      - patch/*
+      - prep-release/*
+    paths-ignore:
+      - 'docs/**'
+      - '.github/**'
+  pull_request:
+    branches:
+      - develop
+      - patch/*
+      - prep-release/*
+  schedule:
+    - cron: "08 22 * * *"
   workflow_dispatch:
+    inputs:
+      test_duration:
+        description: 'Duration for continuous testing (in minutes)'
+        required: false
+        default: '60'
+      test_interval:
+        description: 'Interval between test runs (in seconds)'
+        required: false
+        default: '300'
+      enable_continuous_test:
+        description: 'Enable continuous testing'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
-
-  push_to_registries:
-    name: Push Docker image to multiple registries
+  build_against_dev_release:
+    name: Build DUNEDAQ DataFilter V5 on Alma9
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
-      contents: read
+    timeout-minutes: 480
+    strategy:
+      matrix:
+        include:
+          - image: "almalinux:9"
+            os_name: "alma9"
+            link: "last_successful_alma9"
+    container:
+      image: ${{ matrix.image }}
+      options: --privileged
+    defaults:
+      run:
+        shell: bash
+    
     steps:
-      - name: Check out the repo
+      - name: Install CVMFS and dependencies
+        run: |
+          dnf install -y epel-release
+          dnf install -y \
+            https://ecsft.cern.ch/dist/cvmfs/cvmfs-release/cvmfs-release-latest.noarch.rpm
+          dnf install -y cvmfs cvmfs-config-default
+          dnf install -y git wget curl cmake gcc-c++ make python3 python3-pip
+          
+          # Setup CVMFS
+          mkdir -p /etc/cvmfs
+          cat > /etc/cvmfs/default.local <<EOF
+          CVMFS_REPOSITORIES=dunedaq.opensciencegrid.org
+          CVMFS_HTTP_PROXY=DIRECT
+          CVMFS_CLIENT_PROFILE=single
+          CVMFS_QUOTA_LIMIT=10000
+          EOF
+          
+          # Mount CVMFS
+          mkdir -p /cvmfs/dunedaq.opensciencegrid.org
+          mount -t cvmfs dunedaq.opensciencegrid.org /cvmfs/dunedaq.opensciencegrid.org || true
+          
+          # Verify CVMFS is mounted
+          ls -la /cvmfs/dunedaq.opensciencegrid.org/
+      
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          repository: DUNE-DAQ/daq-docker
-          path: daq-docker 
+          path: ${{ github.repository }}
       
-      - name: Log in to the Container registry
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            ghcr.io/DUNE-DAQ/alma9-minimal
-          tags: |
-            type=raw,value=latest
-            type=ref,event=branch
-            type=ref,event=tag
-
-      - name: prepare build dir
+      - name: Setup dev area
         run: |
-          build_dir="${{ github.workspace }}/docker-build"
-          mkdir -p $build_dir
-          cd $build_dir
-          cp ${{ github.workspace }}/daq-docker/dockerfiles/alma9-minimal.dockerfile $build_dir/Dockerfile
+          source /cvmfs/dunedaq.opensciencegrid.org/tools/dbt/latest/env.sh           
+          pwd 
+          ls
+          dbt-create -b candidate fddaq-v5.3.2-rc3-a9 .
       
-      - name: Build and push Docker images
-        uses: docker/build-push-action@v3
+      - name: Setup build environment
+        run: |
+          source dbt-env.sh
+          dbt-workarea-env || true
+      
+      - name: Clone DUNEDAQ repositories
+        run: |
+          git clone https://github.com/DUNE-DAQ/daqsystemtest.git
+          git clone https://github.com/DUNE-DAQ/fddaqconf.git 
+          git clone https://github.com/DUNE-DAQ/hdf5libs.git 
+          git clone https://github.com/DUNE-DAQ/detdataformats.git
+          git clone https://github.com/DUNE-DAQ/fddetdataformats.git
+          git clone https://github.com/DUNE-DAQ/datafilter.git 
+          git clone https://github.com/DUNE-DAQ/appfwk.git
+      
+      - name: Checkout specific commits
+        run: |
+          cd fddaqconf
+          git checkout 0575bb1ade1632c2679f4c33ca499a1dbf8175a1
+          cd ..
+          
+          cd appfwk
+          git checkout 1f8ce77ccdf23b8e068b8096218cfb26dd87d80e
+          cd ..
+          
+          cd hdf5libs
+          git checkout e1dc1f0b19bd64dbae5a36f5f525d70d4de4f6cb
+          cd ..
+          
+          cd fddetdataformats
+          git checkout 240f71fe8391a7d04db048f111e182ee8313de34
+          cd ..
+      
+      - name: Setup DBT environment and build
+        run: |
+          source dbt-env.sh
+          dbt-workarea-env
+          dbt-build -j$(nproc)
+      
+      - name: Run tests (optional)
+        run: |
+          source dbt-env.sh
+          dbt-workarea-env
+          # Add your test commands here
+          # dbt-test or other test commands
+        continue-on-error: true
+      
+      - name: Continuous Testing
+        if: ${{ github.event.inputs.enable_continuous_test == 'true' }}
+        run: |
+          source dbt-env.sh
+          dbt-workarea-env
+          
+          DURATION=${{ github.event.inputs.test_duration }}
+          INTERVAL=${{ github.event.inputs.test_interval }}
+          END_TIME=$((SECONDS + DURATION * 60))
+          TEST_COUNT=0
+          FAILED_TESTS=0
+          
+          echo "Starting continuous testing for ${DURATION} minutes"
+          echo "Test interval: ${INTERVAL} seconds"
+          echo "=========================================="
+          
+          while [ $SECONDS -lt $END_TIME ]; do
+            TEST_COUNT=$((TEST_COUNT + 1))
+            CURRENT_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+            echo ""
+            echo "=========================================="
+            echo "Test Run #${TEST_COUNT} at ${CURRENT_TIME}"
+            echo "=========================================="
+            
+            # Add your actual test commands here
+            # Example test commands:
+            # dbt-test
+            # pytest tests/
+            # ./run_integration_tests.sh
+            
+            if ! echo "Running test suite..."; then
+              FAILED_TESTS=$((FAILED_TESTS + 1))
+              echo "ERROR: Test run #${TEST_COUNT} failed!"
+            else
+              echo "SUCCESS: Test run #${TEST_COUNT} passed"
+            fi
+            
+            REMAINING=$((END_TIME - SECONDS))
+            if [ $REMAINING -gt $INTERVAL ]; then
+              echo "Next test in ${INTERVAL} seconds..."
+              sleep $INTERVAL
+            else
+              echo "Continuous testing period ending..."
+              break
+            fi
+          done
+          
+          echo ""
+          echo "=========================================="
+          echo "Continuous Testing Summary"
+          echo "=========================================="
+          echo "Total test runs: ${TEST_COUNT}"
+          echo "Failed tests: ${FAILED_TESTS}"
+          echo "Success rate: $(( (TEST_COUNT - FAILED_TESTS) * 100 / TEST_COUNT ))%"
+          
+          if [ $FAILED_TESTS -gt 0 ]; then
+            echo "WARNING: ${FAILED_TESTS} test runs failed"
+            exit 1
+          fi
+      
+      - name: Archive build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          context: ${{ github.workspace }}/docker-build
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          name: build-artifacts-${{ matrix.os_name }}
+          path: |
+            build/
+            log/
+          retention-days: 7
+      
+      # Email notifications (currently disabled)
+      # Uncomment and configure secrets to enable
+      # - name: Send failure notification email
+      #   if: failure()
+      #   uses: dawidd6/action-send-mail@v3
+      #   with:
+      #     server_address: smtp.gmail.com
+      #     server_port: 587
+      #     username: ${{ secrets.EMAIL_USERNAME }}
+      #     password: ${{ secrets.EMAIL_PASSWORD }}
+      #     subject: "DUNEDAQ V5 CI Build Failed - ${{ github.repository }}"
+      #     to: ${{ secrets.NOTIFICATION_EMAIL }}
+      #     from: DUNEDAQ CI Bot
+      #     body: |
+      #       Build failed for DUNEDAQ V5 CI
+      #       
+      #       Repository: ${{ github.repository }}
+      #       Branch: ${{ github.ref_name }}
+      #       Commit: ${{ github.sha }}
+      #       Author: ${{ github.actor }}
+      #       Workflow: ${{ github.workflow }}
+      #       Run: ${{ github.run_number }}
+      #       
+      #       View details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      #       
+      #       Please check the logs for more information.
