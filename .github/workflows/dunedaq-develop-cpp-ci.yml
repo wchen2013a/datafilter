@@ -107,9 +107,10 @@ jobs:
           pwd
           echo "ls"
           ls 
-          echo "find"
-          find .
-          #source dbt-env.sh
+          #echo "find"
+          #find .
+          cd test-area
+          source env.sh
           echo "env"
           env
           dbt-workarea-env || true
@@ -117,6 +118,9 @@ jobs:
         
       - name: Clone DUNEDAQ repositories
         run: |
+          echo "repos pwd"
+          ls
+          cd source
           git clone https://github.com/DUNE-DAQ/daqsystemtest.git
           git clone https://github.com/DUNE-DAQ/fddaqconf.git 
           git clone https://github.com/DUNE-DAQ/hdf5libs.git 
@@ -146,8 +150,13 @@ jobs:
         
       - name: Setup DBT environment and build
         run: |
-          source dbt-env.sh
+          echo "from Build"
+          echo "=>pwd"
+          pwd
+          cd ..
+          source env.sh
           dbt-workarea-env
+          cd source
           dbt-build -j$(nproc)
         continue-on-error: true
       
