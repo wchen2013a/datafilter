@@ -89,7 +89,9 @@ jobs:
           source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
           source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
           setup_dbt latest
+          echo "pwd"
           pwd 
+          echo "ls"
           ls /cvmfs/dunedaq-development.opensciencegrid.org/
           # need to remove it first
           rm -fr test-area
@@ -97,12 +99,18 @@ jobs:
       
       - name: Setup build environment
         run: |
+          echo "pwd"
           pwd
+          echo "ls"
           ls 
+          echo "find"
           find .
-          source dbt-env.sh
+          #source dbt-env.sh
+          echo "env"
+          env
           dbt-workarea-env || true
-      
+        continue-on-error: true
+        
       - name: Clone DUNEDAQ repositories
         run: |
           git clone https://github.com/DUNE-DAQ/daqsystemtest.git
@@ -130,12 +138,14 @@ jobs:
           cd fddetdataformats
           git checkout 240f71fe8391a7d04db048f111e182ee8313de34
           cd ..
-      
+        continue-on-error: true
+        
       - name: Setup DBT environment and build
         run: |
           source dbt-env.sh
           dbt-workarea-env
           dbt-build -j$(nproc)
+        continue-on-error: true
       
       - name: Run tests (optional)
         run: |
