@@ -118,9 +118,12 @@ jobs:
         
       - name: Clone DUNEDAQ repositories
         run: |
-          echo "repos pwd"
+          cd
+          echo "=>repos pwd"
+          pwd
+          cd test-area/sourcecode
+          echo "=> ls"
           ls
-          cd source
           git clone https://github.com/DUNE-DAQ/daqsystemtest.git
           git clone https://github.com/DUNE-DAQ/fddaqconf.git 
           git clone https://github.com/DUNE-DAQ/hdf5libs.git 
@@ -128,6 +131,7 @@ jobs:
           git clone https://github.com/DUNE-DAQ/fddetdataformats.git
           git clone https://github.com/DUNE-DAQ/datafilter.git 
           git clone https://github.com/DUNE-DAQ/appfwk.git
+        continue-on-error: true
       
       - name: Checkout specific commits
         run: |
@@ -153,10 +157,11 @@ jobs:
           echo "from Build"
           echo "=>pwd"
           pwd
-          cd ..
+          cd 
+          cd test-area
           source env.sh
           dbt-workarea-env
-          cd source
+          cd sourcecode
           dbt-build -j$(nproc)
         continue-on-error: true
       
