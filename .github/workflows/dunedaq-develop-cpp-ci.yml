@@ -97,6 +97,9 @@ jobs:
       
       - name: Setup build environment
         run: |
+          pwd
+          ls 
+          find .
           source dbt-env.sh
           dbt-workarea-env || true
       
