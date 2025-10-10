@@ -67,12 +67,28 @@ jobs:
           CVMFS_CLIENT_PROFILE=single
           CVMFS_QUOTA_LIMIT=10000
           EOF
+
+          # Create cache directory
+          mkdir -p /var/cache/cvmfs
           
-          # Mount CVMFS
-          mkdir -p /cvmfs/dunedaq.opensciencegrid.org
-          mount -t cvmfs dunedaq.opensciencegrid.org /cvmfs/dunedaq.opensciencegrid.org || true
-          mount -t cvmfs dunedaq-development.opensciencegrid.org /cvmfs/dunedaq-development.opensciencegrid.org || true
+          # Setup CVMFS for each repository
+          for repo in dunedaq.opensciencegrid.org dunedaq-development.opensciencegrid.org; do
+            mkdir -p /cvmfs/$repo
+            echo "CVMFS_SERVER_URL=http://cvmfs-s1bnl.opensciencegrid.org:8000/cvmfs/@fqrn@" > /etc/cvmfs/domain.d/opensciencegrid.org.conf
+          done
           
+          # Try to setup and mount CVMFS using cvmfs_config
+          cvmfs_config setup
+          
+          # Attempt mounting
+          echo "Attempting to mount CVMFS repositories..."
+          cvmfs_config probe dunedaq.opensciencegrid.org || echo "Failed to probe dunedaq.opensciencegrid.org"
+          cvmfs_config probe dunedaq-development.opensciencegrid.org || echo "Failed to probe dunedaq-development.opensciencegrid.org"
+          
+          # Manual mount as fallback
+          mount -t cvmfs dunedaq.opensciencegrid.org /cvmfs/dunedaq.opensciencegrid.org || echo "Manual mount failed for dunedaq"
+          mount -t cvmfs dunedaq-development.opensciencegrid.org /cvmfs/dunedaq-development.opensciencegrid.org || echo "Manual mount failed for dunedaq-development"
+
           # Verify CVMFS is mounted
           ls -la /cvmfs/dunedaq.opensciencegrid.org/
           ls /cvmfs/dunedaq-development.opensciencegrid.org/candidates
