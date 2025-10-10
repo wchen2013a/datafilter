@@ -39,11 +39,22 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          path: ${{ github.repository }}
       
       - name: setup dev area
         run: 
-          source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
-          source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
+          #source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
+          source /cvmfs/dunedaq.opensciencegrid.org/tools/dbt/latest/env.sh
+          dbt-create.sh -c -n ${{ matrix.link }} dev-${{ matrix.os_name }}
+          #source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
+      - name: setup build env, build and lint the repo against the development release
+        run: |
+          export REPO=$(echo '${{ github.repository }}' | awk -F '/' '{print $2}')
+          cd $GITHUB_WORKSPACE/dev-${{ matrix.os_name }}
+          source dbt-env.sh
+          dbt-workarea-env || true
+          setup_repo_env="SETUP_$REPO"
       - name: Clone DUNEDAQ repositories
         run: 
           mkdir -p test-area
