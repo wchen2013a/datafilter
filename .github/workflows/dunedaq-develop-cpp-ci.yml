@@ -57,42 +57,70 @@ jobs:
           dnf install -y \
             https://ecsft.cern.ch/dist/cvmfs/cvmfs-release/cvmfs-release-latest.noarch.rpm
           dnf install -y cvmfs cvmfs-config-default
-          dnf install -y --allowerasing git wget curl cmake gcc-c++ make python3 python3-pip
+          dnf install -y --allowerasing git wget curl cmake gcc-c++ make python3 python3-pip fuse fuse-libs attr gdb strace
           
           # Setup CVMFS
-          mkdir -p /etc/cvmfs
-          cat > /etc/cvmfs/default.local <<EOF
-          CVMFS_REPOSITORIES=dunedaq.opensciencegrid.org,dunedaq-development.opensciencegrid.org
-          CVMFS_HTTP_PROXY=DIRECT
-          CVMFS_CLIENT_PROFILE=single
-          CVMFS_QUOTA_LIMIT=10000
-          EOF
+          #mkdir -p /etc/cvmfs
+          #cat > /etc/cvmfs/default.local <<EOF
+          #CVMFS_REPOSITORIES=dunedaq.opensciencegrid.org,dunedaq-development.opensciencegrid.org
+          #CVMFS_HTTP_PROXY=DIRECT
+          #CVMFS_CLIENT_PROFILE=single
+          #CVMFS_QUOTA_LIMIT=10000
+          #EOF
 
           # Create cache directory
-          mkdir -p /var/cache/cvmfs
+          #mkdir -p /var/cache/cvmfs
           
           # Setup CVMFS for each repository
-          for repo in dunedaq.opensciencegrid.org dunedaq-development.opensciencegrid.org; do
-            mkdir -p /cvmfs/$repo
-            echo "CVMFS_SERVER_URL=http://cvmfs-s1bnl.opensciencegrid.org:8000/cvmfs/@fqrn@" > /etc/cvmfs/domain.d/opensciencegrid.org.conf
-          done
+          #for repo in dunedaq.opensciencegrid.org dunedaq-development.opensciencegrid.org; do
+          #  mkdir -p /cvmfs/$repo
+          #  echo "CVMFS_SERVER_URL=http://cvmfs-s1bnl.opensciencegrid.org:8000/cvmfs/@fqrn@" > /etc/cvmfs/domain.d/opensciencegrid.org.conf
+          #done
           
           # Try to setup and mount CVMFS using cvmfs_config
-          cvmfs_config setup
+          #cvmfs_config setup
           
           # Attempt mounting
-          echo "Attempting to mount CVMFS repositories..."
-          cvmfs_config probe dunedaq.opensciencegrid.org || echo "Failed to probe dunedaq.opensciencegrid.org"
-          cvmfs_config probe dunedaq-development.opensciencegrid.org || echo "Failed to probe dunedaq-development.opensciencegrid.org"
+          #echo "Attempting to mount CVMFS repositories..."
+          #cvmfs_config probe dunedaq.opensciencegrid.org || echo "Failed to probe dunedaq.opensciencegrid.org"
+          #cvmfs_config probe dunedaq-development.opensciencegrid.org || echo "Failed to probe dunedaq-development.opensciencegrid.org"
           
           # Manual mount as fallback
-          mount -t cvmfs dunedaq.opensciencegrid.org /cvmfs/dunedaq.opensciencegrid.org || echo "Manual mount failed for dunedaq"
-          mount -t cvmfs dunedaq-development.opensciencegrid.org /cvmfs/dunedaq-development.opensciencegrid.org || echo "Manual mount failed for dunedaq-development"
+          #mount -t cvmfs dunedaq.opensciencegrid.org /cvmfs/dunedaq.opensciencegrid.org || echo "Manual mount failed for dunedaq"
+          #mount -t cvmfs dunedaq-development.opensciencegrid.org /cvmfs/dunedaq-development.opensciencegrid.org || echo "Manual mount failed for dunedaq-development"
 
           # Verify CVMFS is mounted
-          ls -la /cvmfs/dunedaq.opensciencegrid.org/
-          ls /cvmfs/dunedaq-development.opensciencegrid.org/candidates
-      
+          #ls -la /cvmfs/dunedaq.opensciencegrid.org/
+          #ls /cvmfs/dunedaq-development.opensciencegrid.org/
+          
+          ################
+          # Install cvmfsexec - a user-space CVMFS solution that doesn't require mounting
+          cd /tmp
+          git clone https://github.com/cvmfs/cvmfsexec
+          cd cvmfsexec
+          ./makedist osg
+          
+          # Create installation directory
+          mkdir -p /opt/cvmfsexec
+          tar -xzf cvmfsexec-*.tar.gz -C /opt/cvmfsexec
+          
+          # Setup cvmfsexec for dunedaq repositories
+          cd /opt/cvmfsexec
+          ./cvmfsexec dunedaq.opensciencegrid.org -- echo "Testing dunedaq access"
+          ./cvmfsexec dunedaq-development.opensciencegrid.org -- echo "Testing dunedaq-development access"
+          
+          # Create wrapper script for easier access
+          cat > /usr/local/bin/with-cvmfs <<'EOFSCRIPT'
+          #!/bin/bash
+          exec /opt/cvmfsexec/cvmfsexec dunedaq.opensciencegrid.org dunedaq-development.opensciencegrid.org -- "$@"
+          EOFSCRIPT
+          chmod +x /usr/local/bin/with-cvmfs
+          
+          # Test access
+          echo "Testing CVMFS access via cvmfsexec:"
+          with-cvmfs ls /cvmfs/dunedaq.opensciencegrid.org/ || echo "Failed to access dunedaq"
+          with-cvmfs ls /cvmfs/dunedaq-development.opensciencegrid.org/ || echo "Failed to access dunedaq-development"
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -101,19 +129,21 @@ jobs:
       - name: Setup dev area
         run: |
           #source /cvmfs/dunedaq.opensciencegrid.org/tools/dbt/latest/env.sh           
-          source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
-          source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
-          setup_dbt latest
-          pwd 
-          ls /cvmfs/dunedaq-development.opensciencegrid.org/candidates
-          mkdir test-area
-          dbt-create -b candidate fddaq-v5.3.2-rc3-a9 ./test-area
-      
+          #source `realpath /cvmfs/dunedaq.opensciencegrid.org/spack-externals/spack-installation/share/spack/setup-env.sh`
+          #source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
+          #setup_dbt latest
+          #pwd 
+          #ls /cvmfs/dunedaq-development.opensciencegrid.org/candidates
+          #mkdir test-area
+          #dbt-create -b candidate fddaq-v5.3.2-rc3-a9 ./test-area
+          with-cvmfs bash -c "source /cvmfs/dunedaq.opensciencegrid.org/tools/dbt/latest/env.sh && pwd && ls && dbt-create -b candidate fddaq-v5.3.2-rc3-a9 ."
+
       - name: Setup build environment
         run: |
-          source dbt-env.sh
-          dbt-workarea-env || true
-      
+          #source dbt-env.sh
+          #dbt-workarea-env || true
+          with-cvmfs bash -c "source dbt-env.sh && dbt-workarea-env || true"
+          
       - name: Clone DUNEDAQ repositories
         run: |
           git clone https://github.com/DUNE-DAQ/daqsystemtest.git
