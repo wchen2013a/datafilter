@@ -1,110 +1,62 @@
-name: build-develop-datafilter
+name: Build alma9-minimal docker image
 
 on:
-  push:
-    branches: 
-      - develop
-      - patch/*
-      - prep-release/*
-    paths-ignore:
-      - 'docs/**'
-      - '.github/**'
-  pull_request:
-    branches:
-      - develop
-      - patch/*
-      - prep-release/*
   schedule:
-    - cron: "08 22 * * *"
+    - cron: "0 5 * * 2"
+
+  push:
+    branches: [ develop ]
+    tags:
+      - 'v*'
+    paths:
+      - dockerfiles/alma9-minimal.dockerfile
+
   workflow_dispatch:
 
 jobs:
-  build_against_dev_release:
-    name: Build DUNEDAQ DataFilter V5 with dependencies
+
+  push_to_registries:
+    name: Push Docker image to multiple registries
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - image: "dunedaq/c8-minimal:dev"
-            os_name: "c8"
-            link: "last_successful_cs8"
-    container:
-      image: ${{ matrix.image }}
-    defaults:
-      run:
-        shell: bash
-    
+    permissions:
+      packages: write
+      contents: read
     steps:
-      - name: Checkout repository
+      - name: Check out the repo
         uses: actions/checkout@v4
         with:
-          path: ${{ github.repository }}
+          repository: DUNE-DAQ/daq-docker
+          path: daq-docker 
       
-      - name: setup dev area
-        run: |
-          source /cvmfs/dunedaq.opensciencegrid.org/tools/dbt/latest/env.sh           
-          pwd 
-          ls
-          dbt-create -b candidate fddaq-v5.3.2-rc3-a9 .
-          #source /cvmfs/dunedaq.opensciencegrid.org/setup_dunedaq.sh
-      - name: setup build env, build and lint the repo against the development release
-        run: |
-          #export REPO=$(echo '${{ github.repository }}' | awk -F '/' '{print $2}')
-          #cd $GITHUB_WORKSPACE/dev-${{ matrix.os_name }}
-          source dbt-env.sh
-          dbt-workarea-env || true
-          #setup_repo_env="SETUP_$REPO"
-     
-      - name: Clone DUNEDAQ repositories
-        run: |
-          ls
-          setup_dbt latest
-          dbt-create -b candidate $DUNE_DAQ_release $INSTALL_DIR/ 
-          git clone https://github.com/DUNE-DAQ/daqsystemtest.git
-          git clone https://github.com/DUNE-DAQ/fddaqconf.git 
-          git clone https://github.com/DUNE-DAQ/hdf5libs.git 
-          git clone https://github.com/DUNE-DAQ/detdataformats.git
-          git clone https://github.com/DUNE-DAQ/fddetdataformats.git
-          git clone https://github.com/DUNE-DAQ/datafilter.git 
-          git clone https://github.com/DUNE-DAQ/appfwk.git
-      
-      - name: Checkout specific commits
-        run: |
-          cd fddaqconf
-          git checkout 0575bb1ade1632c2679f4c33ca499a1dbf8175a1
-          cd ..
-          cd appfwk
-          git checkout 1f8ce77ccdf23b8e068b8096218cfb26dd87d80e
-          cd ..
-          
-          cd hdf5libs
-          git checkout e1dc1f0b19bd64dbae5a36f5f525d70d4de4f6cb
-          cd ..
-          
-          cd fddetdataformats
-          git checkout 240f71fe8391a7d04db048f111e182ee8313de34
-          cd ..
-      
-      - name: Setup DBT environment and build
-        run: |
-          source dbt-env.sh
-          dbt-workarea-env
-          dbt-build -j$(nproc)
-      
-      - name: Run tests (optional)
-        run: |
-          source dbt-env.sh
-          dbt-workarea-env
-          # Add your test commands here
-          # dbt-test or other test commands
-        continue-on-error: true
-      
-      - name: Archive build artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Log in to the Container registry
+        uses: docker/login-action@v2
         with:
-          name: build-artifacts
-          path: |
-            build/
-            log/
-          retention-days: 7
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            ghcr.io/DUNE-DAQ/alma9-minimal
+          tags: |
+            type=raw,value=latest
+            type=ref,event=branch
+            type=ref,event=tag
+
+      - name: prepare build dir
+        run: |
+          build_dir="${{ github.workspace }}/docker-build"
+          mkdir -p $build_dir
+          cd $build_dir
+          cp ${{ github.workspace }}/daq-docker/dockerfiles/alma9-minimal.dockerfile $build_dir/Dockerfile
+      
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v3
+        with:
+          context: ${{ github.workspace }}/docker-build
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
