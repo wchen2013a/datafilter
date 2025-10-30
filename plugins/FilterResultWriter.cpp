@@ -753,15 +753,14 @@ void FilterResultWriter::receive_tr_single_connection() {
           handshake_done = true;
           cv.notify_one();
         }
-        TLOG_DEBUG(5) << "FilterResultWriter: TR receiver callback: "
-                      << msg.msg_id;
+        TLOG() << "FilterResultWriter: TR receiver callback: " << msg.msg_id;
       };
 
   cb_receiver->add_callback(str_receiver_cb);
 
   {
     std::unique_lock<std::mutex> lock(cv_mutex);
-    cv.wait_for(lock, std::chrono::seconds(30), [&] { return handshake_done; });
+    cv.wait_for(lock, std::chrono::seconds(10), [&] { return handshake_done; });
   }
 
   if (!handshake_done) {

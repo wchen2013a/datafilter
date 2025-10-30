@@ -63,7 +63,7 @@
 
 <oks-data>
 
-<info name="" type="" num-of-items="73" oks-format="data" oks-version="862f2957270" created-by="gjc" created-on="thinkpad" creation-time="20231116T105446" last-modified-by="chen" last-modified-on="atlas13.lps.umontreal.ca" last-modification-time="20251007T145932"/>
+<info name="" type="" num-of-items="75" oks-format="data" oks-version="862f2957270" created-by="gjc" created-on="thinkpad" creation-time="20231116T105446" last-modified-by="chen" last-modified-on="atlas13.lps.umontreal.ca" last-modification-time="20251024T192901"/>
 
 <include>
  <file path="schema/confmodel/dunedaq.schema.xml"/>
@@ -81,6 +81,13 @@
  <comment creation-time="20250711T231737" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="add TRQ queue"/>
  <comment creation-time="20250722T133406" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test change data_type."/>
  <comment creation-time="20251007T145932" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251021T160741" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251023T191033" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251023T192604" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251024T142414" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251024T143304" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251024T160013" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251024T192901" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
 </comments>
 
 
@@ -130,13 +137,15 @@
  <attr name="send_timeout_ms" type="bool" val="1"/>
  <attr name="recv_timeout_ms" type="bool" val="1"/>
  <rel name="inputs">
-  <ref class="NetworkConnection" id="TR_tracking0"/>
   <ref class="NetworkConnection" id="bookkeeping0"/>
   <ref class="NetworkConnection" id="conn_A0_G0_C0_"/>
+  <ref class="NetworkConnection" id="TR_tracking2"/>
  </rel>
  <rel name="outputs">
   <ref class="NetworkConnection" id="trdispatcher1"/>
   <ref class="NetworkConnection" id="conn_A1_G0_C0_"/>
+  <ref class="NetworkConnection" id="FO_ctrl0"/>
+  <ref class="NetworkConnection" id="trwriter0"/>
  </rel>
  <rel name="used_resources">
   <ref class="ProcessingResource" id="cpus"/>
@@ -306,8 +315,8 @@
  <attr name="send_timeout_ms" type="u32" val="1000"/>
  <attr name="recv_timeout_ms" type="bool" val="0"/>
  <rel name="inputs">
+  <ref class="NetworkConnection" id="FO_ctrl0"/>
   <ref class="NetworkConnection" id="TR_tracking0"/>
-  <ref class="NetworkConnection" id="TR_tracking2"/>
   <ref class="NetworkConnection" id="trdispatcher1"/>
  </rel>
  <rel name="outputs">
@@ -335,6 +344,15 @@
  <rel name="used_resources">
   <ref class="ProcessingResource" id="cpus"/>
  </rel>
+</obj>
+
+<obj class="NetworkConnection" id="FO_ctrl0">
+ <attr name="data_type" type="string" val="init_t"/>
+ <attr name="send_timeout_ms" type="u32" val="1000"/>
+ <attr name="recv_timeout_ms" type="u32" val="1000"/>
+ <attr name="connection_type" type="enum" val="kSendRecv"/>
+ <attr name="address" type="string" val="tcp://127.0.0.1:12000"/>
+ <rel name="associated_service" class="Service" id="local-connectivity-service-trk0"/>
 </obj>
 
 <obj class="NetworkConnection" id="TR_tracking0">
@@ -479,6 +497,11 @@
 <obj class="Service" id="local-connectivity-service-bk1">
  <attr name="protocol" type="string" val="tcp"/>
  <attr name="port" type="u16" val="33001"/>
+</obj>
+
+<obj class="Service" id="local-connectivity-service-fo0">
+ <attr name="protocol" type="string" val="tcp"/>
+ <attr name="port" type="u16" val="12000"/>
 </obj>
 
 <obj class="Service" id="local-connectivity-service-tr0">

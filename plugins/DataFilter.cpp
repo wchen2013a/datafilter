@@ -10,8 +10,6 @@
 
 #include "DataFilter.hpp"
 
-#include "datafilter/opmon/datafilter_info.pb.h"
-
 namespace dunedaq::datafilter {
 
 DataFilter::DataFilter(const std::string &name)
@@ -24,6 +22,8 @@ DataFilter::DataFilter(const std::string &name)
 
 void DataFilter::init(std::shared_ptr<appfwk::ConfigurationManager> mcfg) {
   TLOG() << "Module name: " << get_name();
+
+  m_mcfg = mcfg;
 
   try {
     m_confdb = std::make_shared<dunedaq::conffwk::Configuration>(m_oksConfig);
@@ -81,13 +81,14 @@ void DataFilter::print_attrs() {
 }
 
 void DataFilter::generate_opmon_data() {
+
   opmon::DataFilterInfo info;
   info.set_total_amount(m_total_amount.load());
   info.set_amount_since_last_call(m_amount_since_last_call.exchange(0));
   publish(std::move(info));
 }
 
-void DataFilter::do_conf(const data_t &) {
+void DataFilter::do_conf(const data_t &cfg) {
   TLOG() << get_name() << " do_conf()";
   dunedaq::opmonlib::TestOpMonManager opmgr;
   try {
@@ -99,29 +100,69 @@ void DataFilter::do_conf(const data_t &) {
     throw;
   }
 
-  TLOG() << get_name() << ": exist do_conf()";
-}
+  // get DataFilter attributes.
+  auto mdal = m_mcfg->get_dal<dunedaq::datafilter::dal::DataFilter>(get_name());
 
-void DataFilter::do_start(const data_t &) {
-  TLOG() << get_name() << " do_start()";
-  // m_thread.start_working_thread();
+  if (mdal == nullptr) {
+    throw appfwk::CommandFailed(ERS_HERE, get_name(), "init",
+                                "Unable to load module configuration");
+  }
 
-  dunedaq::datafilter::DataFilterConfig config;
-  dunedaq::datafilter::RunInfo run_info;
-  auto datafilter_id = std::to_string(config.my_id1);
-  auto df_receiver = std::make_unique<dunedaq::datafilter::DataFilterReceiver>(
-      config, run_info, datafilter_id);
-  while (true) {
+  m_connections = dunedaq::datafilter::ConnectionsBuilder::build_from_dal(mdal);
+  TLOG() << "m_connections " << m_connections.trdispatcher_req[0];
 
-    TLOG() << "Request next tr";
-    df_receiver->organiser.request_next_tr();
-    df_receiver->receive_tr();
+  m_datafilter_id = mdal->get_datafilter_id();
+
+  // bookkeeping first
+  m_bk = std::make_shared<dunedaq::datafilter::BookkeepingReceiver>(
+      m_run_info, m_datafilter_id,
+      m_connections.bk_inputs.empty() ? "" : m_connections.bk_inputs.front(),
+      m_connections.bk_outputs.empty() ? "" : m_connections.bk_outputs.front(),
+      m_session_name);
+
+  m_bk->start();
+  // Wire sink -> organiser -> receiver
+  m_sink = std::make_shared<dunedaq::datafilter::TRRewriterSink>(
+      m_connections, dunedaq::datafilter::SendPolicy::First);
+  m_sink->bind_bookkeeping(m_bk);
+
+  m_organiser = std::make_shared<DataFilterOrganiser>(m_connections, m_sink);
+  m_rx =
+      std::make_unique<DataFilterReceiver>(m_connections, m_organiser, *m_bk,
+                                           /* attach_tracking_inputs */ true);
+
+  TLOG() << "DF Connections summary: "
+         << "TR data inputs=" << m_rx->cx.tr_data_rx.size()
+         << " tracking inputs=" << m_rx->cx.tr_tracking_rx.size()
+         << " dispatcher req=" << m_rx->cx.trdispatcher_req.size();
+  for (auto &uid : m_rx->cx.tr_data_rx) {
+    TLOG() << "TR data uid: " << uid;
   }
 }
 
-void DataFilter::do_stop(const data_t &) {
+void DataFilter::do_start(const data_t & /*cfg*/) {
+  // Register callbacks on all TR inputs; forward-on-arrival
+  // pull mode
+  m_rx->queue_only = false;
+  m_rx->pull_mode = true;
+  m_rx->prefetch_window = 4;
+
+  const std::string tr_data_uid = m_connections.tr_data_tx.at(0);
+  const std::string ctrl_uid = m_connections.trwriter_ctrl.at(0);
+
+  m_sink->init(tr_data_uid, ctrl_uid);
+  m_rx->start();
+}
+
+void DataFilter::do_stop(const data_t & /*cfg*/) {
+
   TLOG() << get_name() << " do_stop()";
-  // m_thread.stop_working_thread();
+  // try {
+  //   if (m_rx)
+  //     m_rx->stop();
+  // } catch (const std::exception &e) {
+  //   TLOG() << "DataFilter::do_stop(): " << e.what();
+  // }
 }
 
 void DataFilter::do_work(std::atomic<bool> &running_flag) {
@@ -129,23 +170,23 @@ void DataFilter::do_work(std::atomic<bool> &running_flag) {
   std::mutex work_mutex;
   std::condition_variable work_cv;
 
-  dunedaq::datafilter::DataFilterConfig config;
-  dunedaq::datafilter::RunInfo run_info;
-  auto datafilter_id = std::to_string(config.my_id1);
-  auto df_receiver = std::make_unique<dunedaq::datafilter::DataFilterReceiver>(
-      config, run_info, datafilter_id);
-  while (running_flag.load()) {
-    TLOG() << "Request next tr";
-    df_receiver->organiser.request_next_tr();
-    df_receiver->receive_tr();
+  // dunedaq::datafilter::DataFilterConfig config;
+  // dunedaq::datafilter::RunInfo run_info;
+  // auto datafilter_id = std::to_string(config.my_id1);
+  // auto df_receiver =
+  // std::make_unique<dunedaq::datafilter::DataFilterReceiver>(
+  //     config, run_info, datafilter_id);
+  // while (running_flag.load()) {
+  //   TLOG() << "Request next tr";
+  //   df_receiver->organiser.request_next_tr();
+  //   df_receiver->receive_tr();
 
-    std::unique_lock<std::mutex> lock(work_mutex);
-    work_cv.wait_for(lock, std::chrono::seconds(1), [&]() {
-      return !running_flag.load(); // check for new work availability
-    });
-  }
+  //   std::unique_lock<std::mutex> lock(work_mutex);
+  //   work_cv.wait_for(lock, std::chrono::seconds(1), [&]() {
+  //     return !running_flag.load(); // check for new work availability
+  //   });
+  // }
 }
-
 } // namespace dunedaq::datafilter
 
 DEFINE_DUNE_DAQ_MODULE(dunedaq::datafilter::DataFilter)

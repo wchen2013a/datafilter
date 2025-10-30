@@ -101,12 +101,12 @@ void FilterOrchestrator::request_next_tr() {
 
   try {
     sender_next_tr->send(std::move(sent_t1), Sender::s_block);
-    TLOG() << "Sent next_tr request - Success";
+    TLOG() << "Sent request_next_tr TRDispatcher - Success";
   } catch (const std::exception &e) {
-    TLOG() << "Sent next_tr request - Failed: " << e.what();
+    TLOG() << "Sent request_next_tr TRDispatcher - Failed: " << e.what();
   }
 
-  TLOG() << "Sent next_tr request - Exiting";
+  TLOG() << "Sent request_next_tr TRDispatcher - Exiting";
 }
 
 void FilterOrchestrator::receive() {

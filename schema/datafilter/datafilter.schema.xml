@@ -80,7 +80,7 @@
 
 <oks-schema>
 
-<info name="" type="" num-of-items="5" oks-format="schema" oks-version="862f2957270" created-by="gjc" created-on="thinkpad" creation-time="20231110T125843" last-modified-by="chen" last-modified-on="atlas13.lps.umontreal.ca" last-modification-time="20251007T145340"/>
+<info name="" type="" num-of-items="5" oks-format="schema" oks-version="862f2957270" created-by="gjc" created-on="thinkpad" creation-time="20231110T125843" last-modified-by="chen" last-modified-on="atlas13.lps.umontreal.ca" last-modification-time="20251013T151810"/>
 
 <include>
  <file path="schema/confmodel/dunedaq.schema.xml"/>
@@ -91,6 +91,7 @@
   <superclass name="DaqModule"/>
   <attribute name="send_timeout_ms" type="bool" init-value="1000" is-not-null="yes"/>
   <attribute name="recv_timeout_ms" type="bool" init-value="1000" is-not-null="yes"/>
+  <attribute name="datafilter_id" type="u32" init-value="0" is-not-null="yes"/>
  </class>
 
  <class name="DataFilterConfig">

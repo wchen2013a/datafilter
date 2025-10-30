@@ -1,3 +1,5 @@
+#ifndef DATAFILTER_STRUCTS_HPP
+#define DATAFILTER_STRUCTS_HPP
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -13,7 +15,6 @@ namespace dunedaq {
 namespace datafilter {
 
 enum struct Precision { SECONDS, MILLISECONDS, MICROSECONDS, NANOSECONDS };
-
 struct Data {
   size_t seq_number;
   size_t trigger_number;
@@ -99,7 +100,7 @@ struct Handshake {
 struct time_point_to_string {
   Precision precision = Precision::SECONDS; // Default to seconds
 
-  // Constructor (optional, for direct initialization)
+  // Constructor (for direct initialization)
   explicit time_point_to_string(Precision prec = Precision::SECONDS)
       : precision(prec) {}
 
@@ -114,7 +115,6 @@ struct time_point_to_string {
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
 
-    // Append subsecond precision if needed
     if (precision != Precision::SECONDS) {
       auto since_epoch = tp.time_since_epoch();
       auto seconds =
@@ -154,3 +154,4 @@ DUNE_DAQ_SERIALIZABLE(dunedaq::datafilter::Data, "data_t");
 DUNE_DAQ_SERIALIZABLE(dunedaq::datafilter::Handshake, "init_t");
 DUNE_DAQ_SERIALIZABLE(dunedaq::datafilter::BookKeeping, "bk_t");
 } // namespace dunedaq
+#endif

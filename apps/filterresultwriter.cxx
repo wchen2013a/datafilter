@@ -42,7 +42,7 @@ int main(int argc, char *argv[]) {
   filterresultwriter1->init(mgr1);
   filterresultwriter1->execute_command("conf", filterresultwriter_cfg);
   filterresultwriter1->execute_command("start", filterresultwriter_cfg);
-  // std::this_thread::sleep_for(std::chrono::seconds(60));
+  std::this_thread::sleep_for(std::chrono::seconds(1));
   filterresultwriter1->execute_command("stop", filterresultwriter_cfg);
 
   return 0;

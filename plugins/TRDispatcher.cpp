@@ -44,7 +44,8 @@ void TRDispatcher::init(std::shared_ptr<appfwk::ConfigurationManager> mcfg) {
 
   for (auto con : mdal->get_outputs()) {
     TLOG() << "Output connection data_type " << con->get_data_type() << " UID "
-           << con->UID() << " datatype_to_string";
+           << con->UID() << " datatype_to_string<trigger_record_ptr_t> "
+           << datatype_to_string<trigger_record_ptr_t>();
     if (con->get_data_type() == datatype_to_string<trigger_record_ptr_t>()) {
       m_tr_connections_o.push_back(con->UID());
       TLOG() << "Output found: " << con->get_data_type();
@@ -470,7 +471,7 @@ void TRDispatcher::send_tr_from_hdf5file() {
   auto bookkeeping_sender =
       dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(
           m_bk_connection_o);
-  bookkeeping_sender->send(std::move(bk_info), Sender::s_block);
+  bookkeeping_sender->send(std::move(bk_info), Sender::s_no_block);
 
   // Handshake with datafilter.
   auto init_sender =
@@ -481,7 +482,7 @@ void TRDispatcher::send_tr_from_hdf5file() {
   // FilterResultWriter
   sent_t1.total_tr = int(records_size);
 
-  init_sender->send(std::move(sent_t1), Sender::s_block);
+  init_sender->send(std::move(sent_t1), Sender::s_no_block);
 
   std::unordered_map<int, std::set<size_t>> completed_receiver_tracking;
   std::mutex tracking_mutex;
