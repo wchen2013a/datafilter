@@ -1,10 +1,10 @@
 #ifndef DATAFILTER_DATAFILTERTRSINK_HPP_
 #define DATAFILTER_DATAFILTERTRSINK_HPP_
 
+#include "daqdataformats/TimeSlice.hpp"
 #include "daqdataformats/TriggerRecord.hpp"
 #include <memory>
 
-#include "daqdataformats/TriggerRecord.hpp"
 #include "iomanager/IOManager.hpp"
 #include "iomanager/Sender.hpp"
 
@@ -16,6 +16,8 @@
 namespace dunedaq::datafilter {
 using trigger_record_ptr_t =
     std::unique_ptr<dunedaq::daqdataformats::TriggerRecord>;
+using timeslice_ptr_t =
+    std::unique_ptr<dunedaq::daqdataformats::TimeSlice>;
 
 struct DataFilterTRSink {
   virtual ~DataFilterTRSink() = default;
@@ -101,7 +103,7 @@ struct TRRewriterSink : DataFilterTRSink {
     // this is not enable yet.
     // const std::string &tx_uid = pick_tx_uid(tr);
     try {
-      m_tr_sender->send(std::move(tr_out), dunedaq::iomanager::Sender::s_block);
+      m_tr_sender->send(std::move(tr_out), std::chrono::milliseconds(5000));
       TLOG_DEBUG(5) << "TRRewriterSink: TR sent on " << tx_uid;
     } catch (const std::exception &e) {
       TLOG() << "TRRewriterSink: ERROR sending TR on " << tx_uid << " : "
@@ -155,6 +157,89 @@ private:
     // Fallback to First (this is the default policy)
     return cx.tr_data_tx.front();
   }
+};
+
+struct DataFilterTSSink {
+  virtual ~DataFilterTSSink() = default;
+  virtual void send_ts(timeslice_ptr_t &ts, size_t total_ts) = 0;
+};
+
+struct TSRewriterSink : DataFilterTSSink {
+  Connections cx;
+  TransferInfo m_out;
+  std::shared_ptr<dunedaq::datafilter::BookkeepingReceiver> m_bk;
+
+  explicit TSRewriterSink(Connections conns) : cx(std::move(conns)) {}
+
+  inline void init(const std::string &data_uid, const std::string &ctrl_uid) {
+    m_data_uid = data_uid;
+    m_ctrl_uid = ctrl_uid;
+    m_ts_sender =
+        dunedaq::get_iom_sender<timeslice_ptr_t>(m_data_uid);
+    m_ctrl_sender =
+        dunedaq::get_iom_sender<dunedaq::datafilter::Handshake>(m_ctrl_uid);
+    TLOG() << "TSRewriterSink: bound data uid=" << m_data_uid;
+  }
+
+  void bind_bookkeeping(
+      std::shared_ptr<dunedaq::datafilter::BookkeepingReceiver> bk) {
+    m_bk = bk;
+  }
+
+  inline void send_ts(timeslice_ptr_t &ts, std::size_t total_ts) override {
+    using clock = std::chrono::steady_clock;
+    const auto t0 = clock::now();
+    const auto bytes = ts ? ts->get_total_size_bytes() : 0;
+
+    timeslice_ptr_t ts_out = std::move(ts);
+    if (!ts_out) {
+      TLOG() << "send_ts(): NULL TimeSlice, nothing to send";
+      return;
+    }
+
+    TLOG() << "TSRewriterSink: send TS to FilterResultWriter";
+    if (!cx.tswriter_ctrl.empty()) {
+      try {
+        dunedaq::datafilter::Handshake h("write_ts");
+        h.total_tr = total_ts;
+        m_ctrl_sender->send(std::move(h),
+                            dunedaq::iomanager::Sender::s_no_block);
+      } catch (const std::exception &e) {
+        TLOG() << "TSRewriterSink: ctrl send failed: " << e.what();
+      }
+    }
+
+    if (cx.ts_data_tx.empty()) {
+      TLOG() << "TSRewriterSink: No ts_data_tx outputs configured; dropping TS";
+      return;
+    }
+
+    try {
+      m_ts_sender->send(std::move(ts_out),
+                        dunedaq::iomanager::Sender::s_block);
+      TLOG_DEBUG(5) << "TSRewriterSink: TS sent on " << m_data_uid;
+    } catch (const std::exception &e) {
+      TLOG() << "TSRewriterSink: ERROR sending TS on " << m_data_uid << " : "
+             << e.what();
+    }
+
+    const auto t1 = clock::now();
+    const double s =
+        std::chrono::duration_cast<std::chrono::duration<double>>(t1 - t0)
+            .count();
+    if (s > 0.0 && bytes > 0) {
+      const double mbps = (static_cast<double>(bytes) * 8.0) / s / 1e6;
+      update_ewma(mbps, m_out);
+    }
+  }
+
+private:
+  std::string m_data_uid, m_ctrl_uid;
+  std::shared_ptr<dunedaq::iomanager::SenderConcept<timeslice_ptr_t>>
+      m_ts_sender;
+  std::shared_ptr<
+      dunedaq::iomanager::SenderConcept<dunedaq::datafilter::Handshake>>
+      m_ctrl_sender;
 };
 
 } // namespace dunedaq::datafilter

@@ -18,6 +18,8 @@ struct HDF5FromStorage {
     std::vector<std::string> hdf5_files_already_transfer;
     std::vector<std::filesystem::path> hdf5_files_to_transfer;
     std::vector<std::filesystem::path> hdf5_files_waiting;
+    std::vector<std::filesystem::path> hdf5_filtered_files;
+    std::vector<std::filesystem::path> hdf5_filtered_writing;
     const std::string json_file;
     const std::string storage_pathname;
     bool is_save_json = false;
@@ -42,9 +44,31 @@ struct HDF5FromStorage {
 
         for (auto const& entry :
              std::filesystem::directory_iterator{daq_storage_path}) {
-            std::string file_ext = entry.path().extension().string();
+            std::string filename = entry.path().filename().string();
 
-            if (file_ext == ".hdf5") {
+            // Classify by file state markers:
+            //   *.filtered.hdf5    — filter complete
+            //   *.filtered.writing — filter in progress
+            //   *.writing          — DAQ still writing (raw)
+            //   *.hdf5             — raw, ready for filtering
+            if (filename.size() > 14 &&
+                filename.substr(filename.size() - 14) == ".filtered.hdf5") {
+                hdf5_filtered_files.push_back(entry.path());
+            } else if (filename.size() > 17 &&
+                       filename.substr(filename.size() - 17) ==
+                           ".filtered.writing") {
+                if (std::filesystem::file_size(entry) == 0) {
+                    TLOG() << "HDF5FromStorage: removing empty partial file: "
+                           << filename;
+                    std::filesystem::remove(entry.path());
+                } else {
+                    hdf5_filtered_writing.push_back(entry.path());
+                }
+            } else if (filename.size() > 8 &&
+                       filename.substr(filename.size() - 8) == ".writing") {
+                hdf5_files_waiting.push_back(entry.path());
+            } else if (filename.size() > 5 &&
+                       filename.substr(filename.size() - 5) == ".hdf5") {
                 auto mod_time = std::filesystem::last_write_time(entry);
                 bool is_older_than_one_hour = (mod_time < one_hour_ago);
 
@@ -52,27 +76,21 @@ struct HDF5FromStorage {
                     TLOG_DEBUG(7)
                         << "found a new hdf5 file older than one hour: "
                         << entry.path().parent_path().string() << "/"
-                        << entry.path().filename().string() << '\n';
+                        << filename << '\n';
 
                     bool is_already_transferred = false;
                     for (const auto& item : hdf5_files_already_transfer) {
-                        // Compare the filename directly (item is a string)
-                        if (item == entry.path().filename().string()) {
+                        if (item == filename) {
                             is_already_transferred = true;
                             break;
                         }
                     }
 
                     if (!is_already_transferred) {
-                        TLOG() << "To transfer "
-                               << entry.path().filename().string() << '\n';
+                        TLOG() << "To transfer " << filename << '\n';
                         hdf5_files_to_transfer.push_back(entry.path());
                     }
                 }
-            }
-
-            if (file_ext == ".writing") {
-                hdf5_files_waiting.push_back(entry.path());
             }
         }
 
@@ -289,7 +307,13 @@ struct HDF5FromStorage {
             std::cout << "HDF5 file to transfer " << file << "\n";
         }
         for (auto file : hdf5_files_waiting) {
-            std::cout << "HDF5 file waiting " << file << "\n";
+            std::cout << "HDF5 file waiting (DAQ writing) " << file << "\n";
+        }
+        for (auto file : hdf5_filtered_files) {
+            std::cout << "HDF5 filtered complete " << file << "\n";
+        }
+        for (auto file : hdf5_filtered_writing) {
+            std::cout << "HDF5 filtered in-progress " << file << "\n";
         }
         for (auto file : hdf5_files_already_transfer) {
             std::cout << "HDF5 file already transfer " << file << "\n";

@@ -6,8 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "daqdataformats/TimeSlice.hpp"
 #include "daqdataformats/TriggerRecord.hpp"
-// #include "datafilter/config/DataFilterConfigAdapter.hpp"
 #include "datafilter/core/Connections.hpp"
 #include "datafilter/core/DataFilterTRSink.hpp"
 #include "iomanager/IOManager.hpp"
@@ -19,10 +19,13 @@
 namespace dunedaq::datafilter {
 using trigger_record_ptr_t =
     std::unique_ptr<dunedaq::daqdataformats::TriggerRecord>;
+using timeslice_ptr_t =
+    std::unique_ptr<dunedaq::daqdataformats::TimeSlice>;
 
 struct DataFilterOrganiser {
   Connections cx;
   std::shared_ptr<dunedaq::datafilter::TRRewriterSink> writer;
+  std::shared_ptr<dunedaq::datafilter::TSRewriterSink> ts_writer;
 
   DataFilterOrganiser(Connections conns, std::shared_ptr<TRRewriterSink> w)
       : cx(std::move(conns)), writer(std::move(w)) {}
@@ -49,17 +52,17 @@ struct DataFilterOrganiser {
 
   // Send ONE "next_tr" request to every configured TRDispatcher control UID.
   inline void request_next_tr() {
-    if (cx.trdispatcher_req.empty()) {
+    if (cx.trdispatcher_req_tx.empty()) {
       TLOG() << "Organiser::request_next_tr(): no dispatcher request endpoints "
                 "configured";
       return;
     }
 
-    for (const auto &uid : cx.trdispatcher_req) {
+    for (const auto &uid : cx.trdispatcher_req_tx) {
       try {
         auto s = dunedaq::get_iom_sender<dunedaq::datafilter::Handshake>(uid);
         dunedaq::datafilter::Handshake msg("next_tr");
-        s->send(std::move(msg), dunedaq::iomanager::Sender::s_block);
+        s->send(std::move(msg), std::chrono::milliseconds(500));
         TLOG() << "Organiser::request_next_tr() sent to FilterOrchastrator "
                   "with uid "
                << uid;
@@ -75,18 +78,18 @@ struct DataFilterOrganiser {
   inline void request_next_tr(std::size_t count) {
     if (count == 0)
       return;
-    if (cx.trdispatcher_req.empty()) {
+    if (cx.trdispatcher_req_tx.empty()) {
       TLOG() << "Organiser::request_next_tr(count): no dispatcher request "
                 "endpoints configured";
       return;
     }
 
     for (std::size_t i = 0; i < count; ++i) {
-      for (const auto &uid : cx.trdispatcher_req) {
+      for (const auto &uid : cx.trdispatcher_req_tx) {
         try {
           auto s = dunedaq::get_iom_sender<dunedaq::datafilter::Handshake>(uid);
           dunedaq::datafilter::Handshake msg("next_tr");
-          s->send(std::move(msg), dunedaq::iomanager::Sender::s_block);
+          s->send(std::move(msg), std::chrono::milliseconds(500));
           TLOG_DEBUG(6) << "Organiser::request_next_tr(" << count << "): sent #"
                         << (i + 1) << " to " << uid;
         } catch (const std::exception &e) {
@@ -105,6 +108,16 @@ struct DataFilterOrganiser {
       return;
     }
     writer->send_tr(tr, total_tr);
+  }
+
+  // Forward a TS to the configured TS sink.
+  inline void accepted_timeslice(timeslice_ptr_t &ts,
+                                 std::size_t total_ts) {
+    if (!ts_writer) {
+      TLOG() << "Organiser::accepted_timeslice(): ts_writer not set";
+      return;
+    }
+    ts_writer->send_ts(ts, total_ts);
   }
 };
 

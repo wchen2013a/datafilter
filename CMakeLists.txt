@@ -30,6 +30,23 @@ find_package(Boost COMPONENTS iostreams unit_test_framework REQUIRED)
 
 
 
+# daq_add_library(NAME datafilter_core
+#   SOURCES
+#     src/core/DataFilterOrganiser.cpp
+#     src/core/SimpleMultiInputReceiver.cpp
+#   PUBLIC_HEADERS
+#     include/datafilter/core/Connections.hpp
+#     include/datafilter/core/ConnectionsBuilder.hpp
+#     include/datafilter/core/ITriggerRecordSink.hpp
+#     include/datafilter/core/ProvisionalTRWriterSink.hpp
+#     include/datafilter/core/DataFilterOrganiser.hpp
+#     include/datafilter/core/SimpleMultiInputReceiver.hpp
+#   LINK_LIBRARIES
+#     iomanager::iomanager
+#     logging::logging
+#     daqdataformats::daqdataformats
+# )
+
 #find_package(pybind11_json ${pybind11_json_REQUIRED_VERSION} REQUIRED)
 include_directories(src/exts/nlohmann_json/include)
 
@@ -54,6 +71,7 @@ daq_add_library (*.cpp LINK_LIBRARIES opmonlib::opmonlib stdc++fs ers::ers HighF
 ##############################################################################
 # See https://dune-daq-sw.readthedocs.io/en/latest/packages/daq-cmake/#daq_add_plugin
 daq_add_plugin(DataFilter duneDAQModule LINK_LIBRARIES  dfmessages::dfmessages datafilter datafilter_dal appfwk::appfwk hdf5libs::hdf5libs) # The appfwk library is needed for DAQModule base class
+#daq_add_plugin(DataFilterBuffered duneDAQModule LINK_LIBRARIES  dfmessages::dfmessages datafilter datafilter_dal appfwk::appfwk hdf5libs::hdf5libs)
 daq_add_plugin(TRDispatcher duneDAQModule LINK_LIBRARIES  dfmessages::dfmessages datafilter datafilter_dal appfwk::appfwk hdf5libs::hdf5libs) # The appfwk library is needed for DAQModule base class
 daq_add_plugin(FilterOrchestrator duneDAQModule LINK_LIBRARIES  datafilter datafilter_dal appfwk::appfwk) # The appfwk library is needed for DAQModule base class
 daq_add_plugin(FilterResultWriter duneDAQModule LINK_LIBRARIES  datafilter datafilter_dal appfwk::appfwk) # The appfwk library is needed for DAQModule base class
@@ -64,7 +82,8 @@ daq_add_plugin(FilterResultWriter duneDAQModule LINK_LIBRARIES  datafilter dataf
 daq_add_application(trdispatcher trdispatcher.cxx             LINK_LIBRARIES  appfwk::appfwk okssystem::okssystem conffwk::conffwk iomanager::iomanager dfmessages::dfmessages rcif::rcif hdf5libs::hdf5libs logging::logging nlohmann_json::nlohmann_json) 
 daq_add_application(filterorchestrator filterorchestrator.cxx LINK_LIBRARIES  appfwk::appfwk okssystem::okssystem conffwk::conffwk iomanager::iomanager hdf5libs::hdf5libs logging::logging nlohmann_json::nlohmann_json) 
 daq_add_application(filterresultwriter filterresultwriter.cxx LINK_LIBRARIES  appfwk::appfwk okssystem::okssystem conffwk::conffwk iomanager::iomanager dfmessages::dfmessages rcif::rcif hdf5libs::hdf5libs logging::logging nlohmann_json::nlohmann_json) 
-daq_add_application(datafilter2 datafilter.cxx LINK_LIBRARIES  appfwk::appfwk okssystem::okssystem conffwk::conffwk iomanager::iomanager dfmessages::dfmessages rcif::rcif hdf5libs::hdf5libs logging::logging nlohmann_json::nlohmann_json) 
+daq_add_application(datafilter2 datafilter.cxx LINK_LIBRARIES  appfwk::appfwk okssystem::okssystem conffwk::conffwk iomanager::iomanager dfmessages::dfmessages rcif::rcif hdf5libs::hdf5libs logging::logging nlohmann_json::nlohmann_json)
+#daq_add_application(datafilterbuffered datafilterbuffered.cxx LINK_LIBRARIES  appfwk::appfwk okssystem::okssystem conffwk::conffwk iomanager::iomanager dfmessages::dfmessages rcif::rcif hdf5libs::hdf5libs logging::logging nlohmann_json::nlohmann_json)
 # daq_add_application(test_oks test_oks.cxx LINK_LIBRARIES appfwk::appfwk okssystem::okssystem conffwk::conffwk iomanager::iomanager dfmessages::dfmessages rcif::rcif hdf5libs::hdf5libs logging::logging nlohmann_json::nlohmann_json) 
 
 daq_install()

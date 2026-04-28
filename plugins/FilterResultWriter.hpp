@@ -17,8 +17,12 @@
 #include "iomanager/IOManager.hpp"
 #include "logging/Logging.hpp"
 
+#include "daqdataformats/TimeSlice.hpp"
 #include "daqdataformats/TriggerRecord.hpp"
 #include "daqdataformats/TriggerRecordHeaderData.hpp"
+#include "datafilter/TimeSlice_serialization.hpp"
+#include "datafilter/core/Connections.hpp"
+#include "datafilter/core/ConnectionsBuilder.hpp"
 #include "datafilter/dal/FilterResultWriter.hpp"
 #include "datafilter/datafilter_structs.hpp"
 #include "datafilter/opmon/filterresultwriter_info.pb.h"
@@ -30,8 +34,12 @@
 #include "utilities/WorkerThread.hpp"
 
 #include <atomic>
+#include <condition_variable>
 #include <execution>
+#include <filesystem>
 #include <limits>
+#include <mutex>
+#include <optional>
 #include <string>
 
 using namespace dunedaq::iomanager;
@@ -39,33 +47,13 @@ using namespace dunedaq::hdf5libs;
 using dataobj_t = nlohmann::json;
 using trigger_record_ptr_t =
     std::unique_ptr<dunedaq::daqdataformats::TriggerRecord>;
+using timeslice_ptr_t =
+    std::unique_ptr<dunedaq::daqdataformats::TimeSlice>;
 
 namespace dunedaq::datafilter {
 
 class FilterResultWriter : public dunedaq::appfwk::DAQModule {
 public:
-  struct FilterResultWriterInfo {
-    size_t conn_id;
-    size_t group_id;
-    size_t messages_sent{0};
-    size_t trigger_number;
-    size_t trigger_timestamp;
-    size_t run_number;
-    size_t element_id;
-    size_t detector_id;
-    size_t error_bits;
-    size_t fragment_type;
-    std::string path_header;
-    int n_frames;
-
-    std::shared_ptr<SenderConcept<dunedaq::datafilter::Data>> sender;
-    std::unique_ptr<std::thread> send_thread;
-    std::chrono::milliseconds get_sender_time;
-
-    FilterResultWriterInfo(size_t group, size_t conn)
-        : conn_id(conn), group_id(group) {}
-  };
-
   struct SubscriberInfo {
     size_t group_id;
     size_t conn_id;
@@ -98,6 +86,7 @@ public:
                                          int trigger_number);
   void receive_tr();
   void receive_tr_single_connection();
+  void receive_ts_single_connection();
   void send_next_tr();
   void receive_attrs_test();
   void start_receive_attrs_test_thread();
@@ -137,6 +126,7 @@ private:
   std::shared_ptr<dunedaq::conffwk::Configuration> m_confdb;
   std::vector<const dunedaq::confmodel::Queue *> m_queues;
   std::vector<const confmodel::NetworkConnection *> m_networkconnections;
+  Connections m_cx;
 
   // TO dfbackend DEVELOPERS: PLEASE DELETE THIS FOLLOWING COMMENT AFTER READING
   // IT m_total_amount and m_amount_since_last_get_info_call are examples of
@@ -158,6 +148,7 @@ private:
   std::string m_info_file_base = "FilterResultWriter";
   std::string m_odir;
   std::string m_output_h5_filename;
+  std::uintmax_t m_min_free_bytes{2ULL * 1024 * 1024 * 1024};
   // std::string m_session_name = "FilterResultWriter test run";
   std::string m_ofile_pathname{};
 
@@ -168,6 +159,13 @@ private:
 
   std::atomic<int64_t> m_total_amount{0};
   std::atomic<int> m_amount_since_last_call{0};
+
+  // Gate: do_start() waits here until DF signals a new dispatch via bookkeeping1.
+  // Prevents receive_tr_single_connection() from looping and sending repeated
+  // kFileCompleted messages when there is no active pipeline cycle.
+  std::atomic<bool> m_dispatch_ready{false};
+  std::mutex m_dispatch_mutex;
+  std::condition_variable m_dispatch_cv;
 
   // for testing only, not used and to be removed.
   std::thread m_attrs_test_thread;

@@ -109,16 +109,24 @@ void DataFilter::do_conf(const data_t &cfg) {
   }
 
   m_connections = dunedaq::datafilter::ConnectionsBuilder::build_from_dal(mdal);
-  TLOG() << "m_connections " << m_connections.trdispatcher_req[0];
+
+  if (!m_connections.trdispatcher_req_tx.empty())
+    TLOG() << "TRDispatcher request tx.front(): "
+           << m_connections.trdispatcher_req_tx.front();
+  else
+    TLOG() << "TRDispatcher request tx is empty.";
 
   m_datafilter_id = mdal->get_datafilter_id();
+  const uint16_t adc_threshold = static_cast<uint16_t>(mdal->get_adc_threshold());
+  TLOG() << "DataFilter: adc_threshold=" << adc_threshold;
 
   // bookkeeping first
   m_bk = std::make_shared<dunedaq::datafilter::BookkeepingReceiver>(
       m_run_info, m_datafilter_id,
-      m_connections.bk_inputs.empty() ? "" : m_connections.bk_inputs.front(),
-      m_connections.bk_outputs.empty() ? "" : m_connections.bk_outputs.front(),
-      m_session_name);
+      m_connections.bk_inputs.empty()     ? "" : m_connections.bk_inputs.front(),
+      m_connections.bk_outputs.empty()    ? "" : m_connections.bk_outputs.front(), // bookkeeping1 → FRW
+      m_session_name,
+      m_connections.bk_outputs.size() > 1 ? m_connections.bk_outputs.at(1) : ""); // bookkeeping2 → TRD
 
   m_bk->start();
   // Wire sink -> organiser -> receiver
@@ -127,14 +135,25 @@ void DataFilter::do_conf(const data_t &cfg) {
   m_sink->bind_bookkeeping(m_bk);
 
   m_organiser = std::make_shared<DataFilterOrganiser>(m_connections, m_sink);
+
+  // Wire TS sink if TS outputs are configured
+  if (!m_connections.ts_data_tx.empty()) {
+    m_ts_sink =
+        std::make_shared<dunedaq::datafilter::TSRewriterSink>(m_connections);
+    m_ts_sink->bind_bookkeeping(m_bk);
+    m_organiser->ts_writer = m_ts_sink;
+    TLOG() << "TS pipeline enabled: ts_data_tx="
+           << m_connections.ts_data_tx.size();
+  }
   m_rx =
       std::make_unique<DataFilterReceiver>(m_connections, m_organiser, *m_bk,
                                            /* attach_tracking_inputs */ true);
+  m_rx->m_alg.adc_threshold = adc_threshold;
 
   TLOG() << "DF Connections summary: "
          << "TR data inputs=" << m_rx->cx.tr_data_rx.size()
          << " tracking inputs=" << m_rx->cx.tr_tracking_rx.size()
-         << " dispatcher req=" << m_rx->cx.trdispatcher_req.size();
+         << " dispatcher req=" << m_rx->cx.trdispatcher_req_tx.size();
   for (auto &uid : m_rx->cx.tr_data_rx) {
     TLOG() << "TR data uid: " << uid;
   }
@@ -151,18 +170,30 @@ void DataFilter::do_start(const data_t & /*cfg*/) {
   const std::string ctrl_uid = m_connections.trwriter_ctrl.at(0);
 
   m_sink->init(tr_data_uid, ctrl_uid);
+
+  if (m_ts_sink && !m_connections.ts_data_tx.empty()) {
+    const std::string ts_data_uid = m_connections.ts_data_tx.at(0);
+    const std::string ts_ctrl_uid = m_connections.tswriter_ctrl.empty()
+                                        ? ctrl_uid
+                                        : m_connections.tswriter_ctrl.at(0);
+    m_ts_sink->init(ts_data_uid, ts_ctrl_uid);
+  }
+
   m_rx->start();
 }
 
 void DataFilter::do_stop(const data_t & /*cfg*/) {
 
   TLOG() << get_name() << " do_stop()";
-  // try {
-  //   if (m_rx)
-  //     m_rx->stop();
-  // } catch (const std::exception &e) {
-  //   TLOG() << "DataFilter::do_stop(): " << e.what();
-  // }
+
+  // Wait for all bookkeeping entries (TRD initial, FRW completion, TRD final)
+  // before letting the framework tear down IOM connections.  Without this
+  // the receiver threads die before FRW and TRD have sent their final BK.
+  if (m_bk) {
+    TLOG() << "do_stop(): waiting for bookkeeping completion...";
+    m_bk->stop();
+    TLOG() << "do_stop(): bookkeeping complete.";
+  }
 }
 
 void DataFilter::do_work(std::atomic<bool> &running_flag) {

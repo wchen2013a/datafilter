@@ -15,7 +15,9 @@
 #include <utility>
 #include <vector>
 
+#include "daqdataformats/TimeSlice.hpp"
 #include "daqdataformats/TriggerRecord.hpp"
+#include "datafilter/TimeSlice_serialization.hpp"
 #include "datafilter/bookkeeping_manager.hpp"
 #include "datafilter/core/Connections.hpp"
 #include "datafilter/core/DataFilterAlgothrims.hpp"
@@ -28,6 +30,7 @@
 namespace dunedaq::datafilter {
 
 using trigger_record_ptr_t = std::unique_ptr<daqdataformats::TriggerRecord>;
+using timeslice_ptr_t = std::unique_ptr<daqdataformats::TimeSlice>;
 
 struct DataFilterReceiver {
   Connections cx;
@@ -43,6 +46,7 @@ struct DataFilterReceiver {
 
   // We keep UIDs we registered on, so we can detach cleanly in stop()
   std::vector<std::string> registered_tr_inputs;
+  std::vector<std::string> registered_ts_inputs;
   std::vector<std::string> registered_tracking_inputs;
 
   struct ReceivedTR {
@@ -180,7 +184,7 @@ public:
 
         // Forward every TR immediately to the organiser; total_tr not tracked
         // here
-        auto tr_cb = [org = organiser, alg = m_alg, this,
+        auto tr_cb = [org = organiser, this,
                       src = ruid](trigger_record_ptr_t &tr) {
           using clock = std::chrono::steady_clock;
           const auto processing_start = clock::now();
@@ -197,7 +201,7 @@ public:
           } else {
 
             const auto rebuild_start = clock::now();
-            auto tr_rebuilt = alg.rebuild_trigger_record(tr);
+            auto tr_rebuilt = m_alg.rebuild_trigger_record(tr);
 
             const auto rebuild_end = clock::now();
 
@@ -212,14 +216,19 @@ public:
               TLOG() << "Rebuild processing rate: " << rebuild_mbps << " Mbps";
             }
 
-            const auto &frames = alg.needed_vec();
-            TLOG() << "Algothrims collected : no algothrims yet "
-                   << frames.size() << " frames";
+            const auto &frames = m_alg.needed_vec();
+            TLOG() << "Algothrims collected " << frames.size() << " frame refs";
 
             // MEASURE ORGANISER PROCESSING TIME
             const auto org_start = clock::now();
-            // Push mode (default): forward immediately to organiser
-            org->accepted_trigger_record2(tr_rebuilt, m_total_tr);
+
+            if (tr_rebuilt) {
+              // Push mode (default): forward immediately to organiser
+              org->accepted_trigger_record2(tr_rebuilt, m_total_tr);
+            } else {
+              TLOG() << "DataFilterReceiver: TR dropped by filter"
+                     << " (all WIBEth fragments below ADC threshold)";
+            }
 
             const auto org_end = clock::now();
 
@@ -234,10 +243,10 @@ public:
               TLOG() << "Organiser processing rate: " << org_mbps << " Mbps";
             }
 
-            // one-for-one top-up in push mode
+            // one-for-one top-up: always request next TR, even if this one
+            // was dropped, because we consumed one pipeline slot
             if (pull_mode && org) {
               try {
-                // Broadcast to all dispatcher UIDs; see Option C for per-UID.
                 org->request_next_tr();
               } catch (const std::exception &e) {
                 TLOG() << "Top-up request_next_tr failed: " << e.what();
@@ -282,12 +291,49 @@ public:
       }
     }
 
+    // Subscribe to all TS inputs and forward-on-arrival
+    for (const auto &ruid : cx.ts_data_rx) {
+      try {
+        auto ts_rx = dunedaq::get_iom_receiver<timeslice_ptr_t>(ruid);
+
+        auto ts_cb = [org = organiser, this,
+                      src = ruid](timeslice_ptr_t &ts) {
+          using clock = std::chrono::steady_clock;
+          const auto t0 = clock::now();
+          const std::size_t bytes = ts ? ts->get_total_size_bytes() : 0;
+
+          // Pass through to organiser (no TS algorithm yet)
+          org->accepted_timeslice(ts, m_total_tr);
+
+          const auto t1 = clock::now();
+          const double secs =
+              std::chrono::duration_cast<std::chrono::duration<double>>(t1 - t0)
+                  .count();
+          if (secs > 0 && bytes > 0) {
+            const double mbps =
+                (static_cast<double>(bytes) * 8.0) / secs / 1e6;
+            std::lock_guard<std::mutex> lk(m_in_mu);
+            update_ewma(mbps, m_in_by_src[src]);
+            update_ewma(mbps, m_in_total);
+          }
+        };
+
+        ts_rx->add_callback(ts_cb);
+        registered_ts_inputs.push_back(ruid);
+        TLOG_DEBUG(5) << "DataFilterReceiver: TS input attached to " << ruid;
+      } catch (const std::exception &e) {
+        TLOG() << "DataFilterReceiver: failed to attach TS input to " << ruid
+               << " : " << e.what();
+      }
+    }
+
     if (pull_mode && prefetch_window > 0 && organiser) {
       organiser->request_next_tr(prefetch_window);
     }
 
     TLOG_DEBUG(5) << "DataFilterReceiver.start(): done; TR inputs="
                   << registered_tr_inputs.size()
+                  << " TS inputs=" << registered_ts_inputs.size()
                   << " tracking inputs=" << registered_tracking_inputs.size();
   }
 
@@ -338,6 +384,19 @@ public:
       }
     }
     registered_tr_inputs.clear();
+
+    // Detach TS input callbacks
+    for (const auto &ruid : registered_ts_inputs) {
+      try {
+        auto ts_rx = dunedaq::get_iom_receiver<timeslice_ptr_t>(ruid);
+        ts_rx->remove_callback();
+        TLOG_DEBUG(6) << "DataFilterReceiver: TS input detached from " << ruid;
+      } catch (const std::exception &e) {
+        TLOG() << "DataFilterReceiver: detach TS input failed for " << ruid
+               << " : " << e.what();
+      }
+    }
+    registered_ts_inputs.clear();
 
     // Detach tracking input callbacks
     for (const auto &tuid : registered_tracking_inputs) {

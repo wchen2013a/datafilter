@@ -63,7 +63,7 @@
 
 <oks-data>
 
-<info name="" type="" num-of-items="75" oks-format="data" oks-version="862f2957270" created-by="gjc" created-on="thinkpad" creation-time="20231116T105446" last-modified-by="chen" last-modified-on="atlas13.lps.umontreal.ca" last-modification-time="20251024T192901"/>
+<info name="" type="" num-of-items="81" oks-format="data" oks-version="862f2957270" created-by="gjc" created-on="thinkpad" creation-time="20231116T105446" last-modified-by="chen" last-modified-on="atlas13.lps.umontreal.ca" last-modification-time="20251101T050653"/>
 
 <include>
  <file path="schema/confmodel/dunedaq.schema.xml"/>
@@ -88,6 +88,9 @@
  <comment creation-time="20251024T143304" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
  <comment creation-time="20251024T160013" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
  <comment creation-time="20251024T192901" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251031T050911" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251101T043551" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
+ <comment creation-time="20251101T050653" created-by="chen" created-on="atlas13.lps.umontreal.ca" author="chen" text="test"/>
 </comments>
 
 
@@ -136,16 +139,22 @@
 <obj class="DataFilter" id="DataFilter_0">
  <attr name="send_timeout_ms" type="bool" val="1"/>
  <attr name="recv_timeout_ms" type="bool" val="1"/>
+ <attr name="adc_threshold" type="u16" val="9170"/>
  <rel name="inputs">
   <ref class="NetworkConnection" id="bookkeeping0"/>
   <ref class="NetworkConnection" id="conn_A0_G0_C0_"/>
   <ref class="NetworkConnection" id="TR_tracking2"/>
+  <ref class="NetworkConnection" id="ts_conn_A0_G0_C0_"/>
  </rel>
  <rel name="outputs">
   <ref class="NetworkConnection" id="trdispatcher1"/>
   <ref class="NetworkConnection" id="conn_A1_G0_C0_"/>
   <ref class="NetworkConnection" id="FO_ctrl0"/>
   <ref class="NetworkConnection" id="trwriter0"/>
+  <ref class="NetworkConnection" id="bookkeeping1"/>
+  <ref class="NetworkConnection" id="bookkeeping2"/>
+  <ref class="NetworkConnection" id="ts_conn_A1_G0_C0_"/>
+  <ref class="NetworkConnection" id="tswriter0"/>
  </rel>
  <rel name="used_resources">
   <ref class="ProcessingResource" id="cpus"/>
@@ -330,16 +339,22 @@
 <obj class="FilterResultWriter" id="FilterResultWriter_0">
  <attr name="send_timeout_ms" type="u32" val="1000"/>
  <attr name="recv_timeout_ms" type="u32" val="1000"/>
- <attr name="odir" type="string" val="/opt/tmp/chen"/>
+ <attr name="odir" type="string" val="/lcg/storage18/dune/chen"/>
  <attr name="output_h5_filename" type="string" val="datafilter_output_h5_test"/>
+ <!-- attr name="min_free_bytes" type="u64" val="2147483648"/ -->
+ <attr name="min_free_bytes" type="u64" val="1024"/>
  <rel name="inputs">
   <ref class="NetworkConnection" id="TR_tracking0"/>
   <ref class="NetworkConnection" id="conn_A0_G0_C0_"/>
   <ref class="NetworkConnection" id="conn_A1_G0_C0_"/>
   <ref class="NetworkConnection" id="bookkeeping1"/>
+  <ref class="NetworkConnection" id="trwriter0"/>
+  <ref class="NetworkConnection" id="ts_conn_A1_G0_C0_"/>
+  <ref class="NetworkConnection" id="tswriter0"/>
  </rel>
  <rel name="outputs">
   <ref class="NetworkConnection" id="TR_tracking0"/>
+  <ref class="NetworkConnection" id="bookkeeping0"/>
  </rel>
  <rel name="used_resources">
   <ref class="ProcessingResource" id="cpus"/>
@@ -400,6 +415,15 @@
  <rel name="associated_service" class="Service" id="local-connectivity-service-bk1"/>
 </obj>
 
+<obj class="NetworkConnection" id="bookkeeping2">
+ <attr name="data_type" type="string" val="bk_t"/>
+ <attr name="send_timeout_ms" type="u32" val="1000"/>
+ <attr name="recv_timeout_ms" type="u32" val="1000"/>
+ <attr name="connection_type" type="enum" val="kSendRecv"/>
+ <attr name="address" type="string" val="tcp://127.0.0.1:33002"/>
+ <rel name="associated_service" class="Service" id="local-connectivity-service-bk2"/>
+</obj>
+
 <obj class="NetworkConnection" id="conn_A0_G0_C0_">
  <attr name="data_type" type="string" val="TriggerRecord"/>
  <attr name="send_timeout_ms" type="u32" val="10"/>
@@ -416,6 +440,33 @@
  <attr name="connection_type" type="enum" val="kPubSub"/>
  <attr name="address" type="string" val="tcp://127.0.0.1:15501"/>
  <rel name="associated_service" class="Service" id="local-connectivity-service-tr1"/>
+</obj>
+
+<obj class="NetworkConnection" id="ts_conn_A0_G0_C0_">
+ <attr name="data_type" type="string" val="TimeSlice"/>
+ <attr name="send_timeout_ms" type="u32" val="5000"/>
+ <attr name="recv_timeout_ms" type="u32" val="5000"/>
+ <attr name="connection_type" type="enum" val="kPubSub"/>
+ <attr name="address" type="string" val="tcp://127.0.0.1:15510"/>
+ <rel name="associated_service" class="Service" id="local-connectivity-service-ts0"/>
+</obj>
+
+<obj class="NetworkConnection" id="ts_conn_A1_G0_C0_">
+ <attr name="data_type" type="string" val="TimeSlice"/>
+ <attr name="send_timeout_ms" type="u32" val="5000"/>
+ <attr name="recv_timeout_ms" type="u32" val="5000"/>
+ <attr name="connection_type" type="enum" val="kPubSub"/>
+ <attr name="address" type="string" val="tcp://127.0.0.1:15511"/>
+ <rel name="associated_service" class="Service" id="local-connectivity-service-ts1"/>
+</obj>
+
+<obj class="NetworkConnection" id="tswriter0">
+ <attr name="data_type" type="string" val="init_t"/>
+ <attr name="send_timeout_ms" type="u32" val="1000"/>
+ <attr name="recv_timeout_ms" type="u32" val="1000"/>
+ <attr name="connection_type" type="enum" val="kSendRecv"/>
+ <attr name="address" type="string" val="tcp://127.0.0.1:24001"/>
+ <rel name="associated_service" class="Service" id="local-connectivity-service-tsw0"/>
 </obj>
 
 <obj class="NetworkConnection" id="trdispatcher0">
@@ -499,6 +550,11 @@
  <attr name="port" type="u16" val="33001"/>
 </obj>
 
+<obj class="Service" id="local-connectivity-service-bk2">
+ <attr name="protocol" type="string" val="tcp"/>
+ <attr name="port" type="u16" val="33002"/>
+</obj>
+
 <obj class="Service" id="local-connectivity-service-fo0">
  <attr name="protocol" type="string" val="tcp"/>
  <attr name="port" type="u16" val="12000"/>
@@ -544,6 +600,21 @@
  <attr name="port" type="u16" val="24000"/>
 </obj>
 
+<obj class="Service" id="local-connectivity-service-ts0">
+ <attr name="protocol" type="string" val="tcp"/>
+ <attr name="port" type="u16" val="15510"/>
+</obj>
+
+<obj class="Service" id="local-connectivity-service-ts1">
+ <attr name="protocol" type="string" val="tcp"/>
+ <attr name="port" type="u16" val="15511"/>
+</obj>
+
+<obj class="Service" id="local-connectivity-service-tsw0">
+ <attr name="protocol" type="string" val="tcp"/>
+ <attr name="port" type="u16" val="24001"/>
+</obj>
+
 <obj class="Service" id="my-controller_control">
  <attr name="protocol" type="string" val="grpc"/>
  <attr name="port" type="u16" val="0"/>
@@ -568,18 +639,20 @@
  <attr name="recv_timeout_ms" type="u32" val="1000"/>
  <attr name="storage_pathname" type="string" val="/lcg/storage19/test-area/dune/trigger_records/sourcehdf5"/>
  <attr name="is_from_storage" type="bool" val="1"/>
- <attr name="input_h5_filename" type="string" val="swtest_run001039_0000_dataflow0_datawriter_0_20231103T121050.hdf5"/>
+ <attr name="input_h5_filename" type="string" val="np04hd_run024552_0011_dataflow0_datawriter_0_20240320T143503.hdf5"/>
  <attr name="json_file" type="string" val="hdf5_files_list.json"/>
  <attr name="generate_trigger_record" type="bool" val="0"/>
  <rel name="inputs">
   <ref class="NetworkConnection" id="TR_tracking0"/>
   <ref class="NetworkConnection" id="trdispatcher0"/>
   <ref class="NetworkConnection" id="TR_tracking1"/>
-  <ref class="NetworkConnection" id="TR_tracking2"/>
+  <ref class="NetworkConnection" id="bookkeeping2"/>
  </rel>
  <rel name="outputs">
   <ref class="NetworkConnection" id="conn_A0_G0_C0_"/>
   <ref class="NetworkConnection" id="bookkeeping0"/>
+  <ref class="NetworkConnection" id="TR_tracking2"/>
+  <ref class="NetworkConnection" id="ts_conn_A0_G0_C0_"/>
  </rel>
  <rel name="used_resources">
   <ref class="ProcessingResource" id="cpus"/>

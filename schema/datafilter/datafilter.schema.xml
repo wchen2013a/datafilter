@@ -80,7 +80,7 @@
 
 <oks-schema>
 
-<info name="" type="" num-of-items="5" oks-format="schema" oks-version="862f2957270" created-by="gjc" created-on="thinkpad" creation-time="20231110T125843" last-modified-by="chen" last-modified-on="atlas13.lps.umontreal.ca" last-modification-time="20251013T151810"/>
+<info name="" type="" num-of-items="6" oks-format="schema" oks-version="862f2957270" created-by="gjc" created-on="thinkpad" creation-time="20231110T125843" last-modified-by="chen" last-modified-on="atlas13.lps.umontreal.ca" last-modification-time="20260419T200812"/>
 
 <include>
  <file path="schema/confmodel/dunedaq.schema.xml"/>
@@ -92,6 +92,17 @@
   <attribute name="send_timeout_ms" type="bool" init-value="1000" is-not-null="yes"/>
   <attribute name="recv_timeout_ms" type="bool" init-value="1000" is-not-null="yes"/>
   <attribute name="datafilter_id" type="u32" init-value="0" is-not-null="yes"/>
+  <attribute name="adc_threshold" description="ADC threshold for WIBEth fragment filtering. Fragment kept if any channel/sample ADC &gt;= this value. Set 0 for pass-through (keep all). WIBEth ADC is 14-bit (max 16383); set &gt;= 16384 to reject all WIBEth fragments." type="u16" init-value="0" is-not-null="yes"/>
+ </class>
+
+ <class name="DataFilterBuffered">
+  <superclass name="DaqModule"/>
+  <attribute name="datafilter_id" type="u32" init-value="0" is-not-null="yes"/>
+  <attribute name="processing_mode" description="immediate, batch_fixed, batch_adaptive, drain_all" type="string" init-value="immediate" is-not-null="yes"/>
+  <attribute name="buffer_capacity" description="Max buffer size, 0=unlimited" type="u32" init-value="0" is-not-null="yes"/>
+  <attribute name="prefetch_count" description="Number of TRs to prefetch" type="u32" init-value="16" is-not-null="yes"/>
+  <attribute name="batch_size" description="Batch size for batch processing modes" type="u32" init-value="8" is-not-null="yes"/>
+  <attribute name="processing_threads" description="Number of processing threads" type="u32" init-value="1" is-not-null="yes"/>
  </class>
 
  <class name="DataFilterConfig">
@@ -119,6 +130,7 @@
   <attribute name="recv_timeout_ms" type="u32" init-value="1000" is-not-null="yes"/>
   <attribute name="odir" type="string" is-not-null="yes"/>
   <attribute name="output_h5_filename" type="string" is-not-null="yes"/>
+  <attribute name="min_free_bytes" description="Minimum free space required before writing an output file, in bytes." type="u64" init-value="0" is-not-null="yes"/>
  </class>
 
  <class name="TRDispatcher">

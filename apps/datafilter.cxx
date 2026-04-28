@@ -16,6 +16,7 @@
 #include "datafilter/dal/DataFilterConfig.hpp"
 #include "datafilter/make_config_mgr.hpp"
 #include "ers/ers.hpp"
+#include <csignal>
 
 using namespace dunedaq::appfwk;
 using data_t = nlohmann::json;
@@ -45,8 +46,17 @@ int main(int argc, char *argv[]) {
   datafilter1->init(mgr1);
   datafilter1->execute_command("conf", datafilter_cfg);
   datafilter1->execute_command("start", datafilter_cfg);
-  // allow enough time for worker to enter loop at least once
-  std::this_thread::sleep_for(1s);
+
+  // Block until SIGINT or SIGTERM (Ctrl+C), then do a graceful stop.
+  sigset_t waitset;
+  sigemptyset(&waitset);
+  sigaddset(&waitset, SIGINT);
+  sigaddset(&waitset, SIGTERM);
+  sigprocmask(SIG_BLOCK, &waitset, nullptr);
+  int sig_received = 0;
+  sigwait(&waitset, &sig_received);
+  TLOG() << "Received signal " << sig_received << ", stopping DataFilter...";
+
   datafilter1->execute_command("stop", datafilter_cfg);
 
   return 0;

@@ -62,6 +62,7 @@ private:
   // Wiring
   Connections m_connections;
   std::shared_ptr<TRRewriterSink> m_sink;
+  std::shared_ptr<TSRewriterSink> m_ts_sink;
   std::shared_ptr<DataFilterOrganiser> m_organiser;
   std::unique_ptr<DataFilterReceiver> m_rx;
   std::shared_ptr<dunedaq::datafilter::BookkeepingReceiver> m_bk;

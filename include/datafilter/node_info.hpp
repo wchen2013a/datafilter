@@ -41,7 +41,7 @@ struct node_info {
                 << seconds;
             node_info.push_back({"Uptime", oss.str()});
             node_info.push_back(
-                {"NPROCESSORS", to_string(sysconf(_SC_NPROCESSORS_ONLN))});
+                {"NPROCESSORS", std::to_string(sysconf(_SC_NPROCESSORS_ONLN))});
             double loadavg[3];
             if (getloadavg(loadavg, 3) > 0) {
                 oss.str("");

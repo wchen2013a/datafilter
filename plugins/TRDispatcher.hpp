@@ -20,9 +20,11 @@
 
 #include "appfwk/DAQModule.hpp"
 #include "confmodel/DaqApplication.hpp"
+#include "daqdataformats/TimeSlice.hpp"
 #include "daqdataformats/TriggerRecord.hpp"
 #include "daqdataformats/TriggerRecordHeaderData.hpp"
 #include "datafilter/HDF5FromStorage.hpp"
+#include "datafilter/TimeSlice_serialization.hpp"
 #include "datafilter/datafilter_structs.hpp"
 #include "datafilter/node_info.hpp"
 #include "dfmessages/TriggerRecord_serialization.hpp"
@@ -32,6 +34,8 @@
 #include "conffwk/ConfigObject.hpp"
 #include "conffwk/ConfigObjectImpl.hpp"
 
+#include "datafilter/core/Connections.hpp"
+#include "datafilter/core/ConnectionsBuilder.hpp"
 #include "datafilter/dal/TRDispatcher.hpp"
 #include "datafilter/opmon/trdispatcher_info.pb.h"
 #include "detdataformats/DetID.hpp"
@@ -39,6 +43,8 @@
 
 using trigger_record_ptr_t =
     std::unique_ptr<dunedaq::daqdataformats::TriggerRecord>;
+using timeslice_ptr_t =
+    std::unique_ptr<dunedaq::daqdataformats::TimeSlice>;
 
 using namespace dunedaq::hdf5libs;
 using namespace dunedaq::daqdataformats;
@@ -77,6 +83,7 @@ public:
   void receive(bool is_hdf5file);
 
   void send_tr_from_hdf5file();
+  void send_ts_from_hdf5file();
   void send_tr();
   void get_from_storage();
   trigger_record_ptr_t create_trigger_record(uint64_t trig_num);
@@ -124,12 +131,17 @@ private:
 
   std::string m_init_connection;
   std::vector<std::string> m_tr_connections_o;
+  std::vector<std::string> m_tr_tracking_tx;
   std::string m_bk_connection_o;
+  dunedaq::datafilter::Connections m_cx;
 
   std::chrono::milliseconds m_send_timeout_ms{100};
   std::chrono::milliseconds m_recv_timeout_ms{100};
   std::string m_trdispatcher_id;
+  std::string m_tsdispatcher_id;
   std::string m_bk_info_id;
+  std::string m_trdispatcher_req_rx;
+
   size_t m_trigger_number;
   size_t m_run_number;
   size_t run_number = 53;

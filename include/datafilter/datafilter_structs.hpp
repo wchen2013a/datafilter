@@ -14,6 +14,62 @@
 namespace dunedaq {
 namespace datafilter {
 
+// TR lifecycle states — numbers match DataStorageModelNotes-3.pdf
+// States 1–5 are upstream (builder/recorder), outside datafilter scope.
+enum class TRStatus : uint8_t {
+  kUnknown            = 0,
+  // -- Upstream states (for reference) --
+  // kCreated          = 1,
+  // kAssignedToBuilder= 2,
+  // kBuilding         = 3,
+  // kBuilt            = 4,
+  // kRecorded         = 5,
+  // -- DataFilter states --
+  kAssignedToFilter   = 6,   // TR dispatched to filter pipeline
+  kReducing           = 7,   // filter algorithm running
+  kReduced            = 8,   // filter complete
+  kReRecorded         = 9,   // written to filtered HDF5
+  kFileCompleted      = 10,  // all TRs in batch written
+  // -- Offline states (not yet implemented) --
+  // kMetadataCreated  = 11,
+  // kTransferred      = 12,
+  // kConfirmedOffline = 13,
+  // kDeletedOnline    = 14,
+  // -- Error --
+  kWriteFailed        = 100,
+};
+
+inline const char*
+to_string(TRStatus s)
+{
+  switch (s) {
+    case TRStatus::kUnknown:           return "unknown";
+    case TRStatus::kAssignedToFilter:  return "assigned_to_filter";
+    case TRStatus::kReducing:          return "reducing";
+    case TRStatus::kReduced:           return "reduced";
+    case TRStatus::kReRecorded:        return "re_recorded";
+    case TRStatus::kFileCompleted:     return "file_completed";
+    case TRStatus::kWriteFailed:       return "write_failed";
+    default:                           return "unknown";
+  }
+}
+
+inline TRStatus
+tr_status_from_string(const std::string& s)
+{
+  if (s == "assigned_to_filter") return TRStatus::kAssignedToFilter;
+  if (s == "reducing")           return TRStatus::kReducing;
+  if (s == "reduced")            return TRStatus::kReduced;
+  if (s == "re_recorded")        return TRStatus::kReRecorded;
+  if (s == "file_completed")     return TRStatus::kFileCompleted;
+  if (s == "write_failed")       return TRStatus::kWriteFailed;
+  // Legacy compatibility
+  if (s == "send")               return TRStatus::kAssignedToFilter;
+  if (s == "written")            return TRStatus::kReRecorded;
+  if (s == "all_complete")       return TRStatus::kFileCompleted;
+  return TRStatus::kUnknown;
+}
+
 enum struct Precision { SECONDS, MILLISECONDS, MICROSECONDS, NANOSECONDS };
 struct Data {
   size_t seq_number;

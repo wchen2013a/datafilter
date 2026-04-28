@@ -5,7 +5,8 @@
 * For the first time setup of the datafilter, you can run 
 ```
 wget https://raw.githubusercontent.com/DUNE-DAQ/datafilter/refs/heads/develop/setup-datafilter.sh
-source setup-datafilter.sh
+chmod 755 setup-datafilter.sh
+./setup-datafilter.sh /your/path
 
 ```
 You need to modify the $INSTALL_DIR in the script to set where you want it to install.

@@ -10,10 +10,6 @@
 
 #include "FilterOrchestrator.hpp"
 
-#include "datafilter/dal/FilterOrchestrator.hpp"
-#include "datafilter/opmon/filterorchestrator_info.pb.h"
-#include <string>
-
 namespace dunedaq::datafilter {
 
 FilterOrchestrator::FilterOrchestrator(const std::string &name)
@@ -29,7 +25,7 @@ void FilterOrchestrator::init(
     std::shared_ptr<appfwk::ConfigurationManager> mcfg) {
   TLOG() << "Module name: " << get_name();
 
-  m_mcfg = mcfg;
+  // m_mcfg = mcfg;
 
   try {
     m_confdb = std::make_shared<dunedaq::conffwk::Configuration>(m_oksConfig);
@@ -39,6 +35,20 @@ void FilterOrchestrator::init(
 
   m_confdb->get<dunedaq::confmodel::Queue>(m_queues);
   m_confdb->get<dunedaq::confmodel::NetworkConnection>(m_networkconnections);
+
+  // get FilterOrchestractor attributes.
+  auto mdal =
+      mcfg->get_dal<dunedaq::datafilter::dal::FilterOrchestrator>(get_name());
+
+  if (mdal == nullptr) {
+    throw appfwk::CommandFailed(ERS_HERE, get_name(), "init",
+                                "Unable to load module configuration");
+  }
+
+  m_cx = dunedaq::datafilter::ConnectionsBuilder::build_from_dal(mdal);
+  TLOG() << "FilterOrchestractor: trdispatcher_req_tx size="
+         << m_cx.trdispatcher_req_tx.size()
+         << " tr_tracking_rx size=" << m_cx.tr_tracking_rx.size();
 }
 
 void FilterOrchestrator::do_conf(const data_t &) {
@@ -64,6 +74,7 @@ void FilterOrchestrator::do_start(const data_t &) {
   }
   // m_thread.start_working_thread();
 }
+
 void FilterOrchestrator::do_stop(const data_t &) {
   TLOG() << get_name() << ": do_stop()";
   // m_thread.stop_working_thread();
@@ -92,18 +103,19 @@ void FilterOrchestrator::do_work(std::atomic<bool> &running_flag) {
 }
 
 void FilterOrchestrator::request_next_tr() {
-  bool handshake_done = false;
-
-  auto sender_next_tr =
-      dunedaq::get_iom_sender<dunedaq::datafilter::Handshake>("trdispatcher0");
-
-  dunedaq::datafilter::Handshake sent_t1("trdispatcher0");
-
-  try {
-    sender_next_tr->send(std::move(sent_t1), Sender::s_block);
-    TLOG() << "Sent request_next_tr TRDispatcher - Success";
-  } catch (const std::exception &e) {
-    TLOG() << "Sent request_next_tr TRDispatcher - Failed: " << e.what();
+  if (m_cx.trdispatcher_req_tx.empty()) {
+    TLOG() << "trdispatcher_req_tx endpoints is empty";
+    return;
+  }
+  for (const auto &uid : m_cx.trdispatcher_req_tx) {
+    try {
+      auto s = dunedaq::get_iom_sender<dunedaq::datafilter::Handshake>(uid);
+      dunedaq::datafilter::Handshake send_t1("trdispatcher0");
+      s->send(std::move(send_t1), Sender::s_block);
+      TLOG() << "Sent request_next_tr TRDispatcher - Sucess to " << uid;
+    } catch (const std::exception &e) {
+      TLOG() << "Sent request_next_tr TRDispatcher - Failed: " << e.what();
+    }
   }
 
   TLOG() << "Sent request_next_tr TRDispatcher - Exiting";
@@ -115,8 +127,11 @@ void FilterOrchestrator::receive() {
   TLOG() << "receive() - Starting";
   bool handshake_done = false;
 
+  TLOG() << "m_cx.trdispatcher_req_rx ====> "
+         << m_cx.trdispatcher_req_rx.front();
+
   auto cb_receiver = dunedaq::get_iom_receiver<dunedaq::datafilter::Handshake>(
-      "trdispatcher1");
+      m_cx.trdispatcher_req_rx.front());
 
   std::function<void(dunedaq::datafilter::Handshake)> str_receiver_cb =
       [&](dunedaq::datafilter::Handshake msg) {
@@ -147,37 +162,6 @@ void FilterOrchestrator::receive() {
   cb_receiver->remove_callback();
   request_next_tr();
 }
-
-// void FilterOrchestrator::receive() {
-//   bool handshake_done = false;
-
-//   auto cb_receiver =
-//   dunedaq::get_iom_receiver<dunedaq::datafilter::Handshake>(
-//       "trdispatcher1");
-//   std::function<void(dunedaq::datafilter::Handshake)> str_receiver_cb =
-//       [&](dunedaq::datafilter::Handshake msg) {
-//         if (msg.msg_id == "next_tr") {
-//           handshake_done = true;
-//           TLOG() << "Received next_tr instruction from Data Filter ";
-//         }
-//       };
-
-//   cb_receiver->add_callback(str_receiver_cb);
-
-//   auto start = std::chrono::steady_clock::now();
-//   while (!handshake_done && (std::chrono::steady_clock::now() - start) <
-//                                 std::chrono::seconds(10)) {
-//     std::this_thread::sleep_for(std::chrono::milliseconds(10));
-//   }
-
-//   cb_receiver->remove_callback();
-
-//   if (handshake_done) {
-//     request_next_tr();
-//   } else {
-//     TLOG() << "Timeout waiting for next_tr message";
-//   }
-// }
 
 void FilterOrchestrator::generate_opmon_data() {
   dunedaq::datafilter::opmon::FilterOrchestratorInfo info;
