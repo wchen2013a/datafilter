@@ -62,9 +62,9 @@ struct ConnectionsBuilder {
     TLOG_DEBUG(5) << "Data type strings: TR=" << dt_tr << " TS=" << dt_ts
                   << " HS=" << dt_hs << " BK=" << dt_bk;
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Parse OUTPUTS (this module → others)
-    // ─────────────────────────────────────────────────────────────────────────
+    // ---------------------------------------
+    // Parse OUTPUTS (this module -> others)
+    // ---------------------------------------
     for (auto con : mdal.get_outputs()) {
       const auto &dt = con->get_data_type();
       const auto &id = con->UID();
@@ -91,9 +91,9 @@ struct ConnectionsBuilder {
       }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Parse INPUTS (others → this module)
-    // ─────────────────────────────────────────────────────────────────────────
+    // ------------------------------------
+    // Parse INPUTS (others -> this module)
+    // ------------------------------------
     for (auto con : mdal.get_inputs()) {
       const auto &dt = con->get_data_type();
       const auto &id = con->UID();

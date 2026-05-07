@@ -14,17 +14,16 @@ using dunedaq::datafilter::FilterResultWriter;
 
 namespace {
 
-bool has_enough_space(const std::string& dir, std::uintmax_t min_free_bytes)
-{
+bool has_enough_space(const std::string &dir, std::uintmax_t min_free_bytes) {
   std::error_code ec;
   auto sp = std::filesystem::space(dir, ec);
   if (ec) {
-    TLOG() << "StorageCheck: cannot query space for " << dir
-           << " (" << ec.message() << ") — proceeding anyway";
+    TLOG() << "StorageCheck: cannot query space for " << dir << " ("
+           << ec.message() << ") -- proceeding anyway";
     return true; // don't block on query failure
   }
   if (sp.available < min_free_bytes) {
-    TLOG() << "StorageCheck: STORAGE LOW — available=" << sp.available
+    TLOG() << "StorageCheck: STORAGE LOW -- available=" << sp.available
            << " bytes (<" << min_free_bytes << "), skipping write to " << dir;
     return false;
   }
@@ -36,8 +35,6 @@ namespace dunedaq::datafilter {
 
 FilterResultWriter::FilterResultWriter(const std::string &name)
     : dunedaq::appfwk::DAQModule(name),
-      m_thread(
-          std::bind(&FilterResultWriter::do_work, this, std::placeholders::_1)),
       m_bk_thread(std::bind(&FilterResultWriter::receive_attrs, this,
                             std::placeholders::_1)) {
   register_command("conf", &FilterResultWriter::do_conf);
@@ -59,7 +56,7 @@ void FilterResultWriter::FilterResultWriter::init(
   m_confdb->get<dunedaq::confmodel::Queue>(m_queues);
   m_confdb->get<dunedaq::confmodel::NetworkConnection>(m_networkconnections);
 
-  // get TRDispatcher attributes.
+  // get attributes (it is moving from TRD->DF->FRW).
   auto mdal =
       mcfg->get_dal<dunedaq::datafilter::dal::FilterResultWriter>(get_name());
 
@@ -98,15 +95,65 @@ void FilterResultWriter::do_conf(const data_t &) {
     throw;
   }
 
+  // --kPubSub data channels--
+  // Register callbacks immediately so ZMQ SUB sockets are subscribed before
+  // any other app calls do_start() and publishes data.  Callbacks deposit
+  // received data into per-type prebuf queues.
+  if (!m_cx.ts_data_rx.empty() && !m_ts_prebuf_rx) {
+    m_ts_prebuf_rx =
+        dunedaq::get_iom_receiver<timeslice_ptr_t>(m_cx.ts_data_rx.front());
+    m_ts_prebuf_rx->add_callback([this](timeslice_ptr_t &ts) {
+      std::lock_guard<std::mutex> lk(m_ts_prebuf_mtx);
+      m_ts_prebuf.push(std::move(ts));
+      m_ts_prebuf_cv.notify_one();
+    });
+    TLOG() << "FRW: registered TS kPubSub callback on "
+           << m_cx.ts_data_rx.front();
+  }
+
+  if (!m_cx.tr_data_rx.empty() && !m_tr_prebuf_rx) {
+    m_tr_prebuf_rx = dunedaq::get_iom_receiver<trigger_record_ptr_t>(
+        m_cx.tr_data_rx.front());
+    m_tr_prebuf_rx->add_callback([this](trigger_record_ptr_t &tr) {
+      std::lock_guard<std::mutex> lk(m_tr_prebuf_mtx);
+      m_tr_prebuf.push(std::move(tr));
+      m_tr_prebuf_cv.notify_one();
+    });
+    TLOG() << "FRW: registered TR kPubSub callback on "
+           << m_cx.tr_data_rx.front();
+  }
+
+  // -- kSendRecv ctrl channels (trwriter0, tswriter0)
+  // IOManager creates the ZMQ PULL socket lazily on the first
+  // get_iom_receiver() call.  If receive_tr/ts_single_connection() is the first
+  // caller (inside do_start()), the socket is created AFTER DF has already sent
+  // "write_tr"/ "write_ts" on cold start — the message may be dropped before
+  // the socket exists.  Calling get_iom_receiver() here pre-creates the sockets
+  // so the TCP connection is established during do_conf(), long before
+  // do_start().
+  if (!m_cx.trwriter_ctrl.empty()) {
+    dunedaq::get_iom_receiver<dunedaq::datafilter::Handshake>(
+        m_cx.trwriter_ctrl.front());
+    TLOG() << "FRW: pre-warmed trwriter_ctrl PULL on "
+           << m_cx.trwriter_ctrl.front();
+  }
+  if (!m_cx.tswriter_ctrl.empty()) {
+    dunedaq::get_iom_receiver<dunedaq::datafilter::Handshake>(
+        m_cx.tswriter_ctrl.front());
+    TLOG() << "FRW: pre-warmed tswriter_ctrl PULL on "
+           << m_cx.tswriter_ctrl.front();
+  }
+
   TLOG() << get_name() << ": exist do_conf()";
 }
 
 void FilterResultWriter::do_start(const data_t &) {
-  // Remove any zero-byte .filtered.writing files left by a previous crashed run.
+  // Remove any zero-byte .filtered.writing files left by a previous crashed
+  // run.
   std::error_code ec;
-  for (auto& entry : std::filesystem::directory_iterator(m_odir, ec)) {
-    const auto& p = entry.path();
-    const auto& s = p.string();
+  for (auto &entry : std::filesystem::directory_iterator(m_odir, ec)) {
+    const auto &p = entry.path();
+    const auto &s = p.string();
     if (s.size() > 17 && s.substr(s.size() - 17) == ".filtered.writing" &&
         std::filesystem::file_size(p, ec) == 0) {
       TLOG() << "do_start: removing stale empty partial file: " << p;
@@ -116,41 +163,81 @@ void FilterResultWriter::do_start(const data_t &) {
 
   m_bk_thread.start_working_thread();
 
-  while (true) {
+  m_running.store(true);
+
+  // Register always-on write_tr ctrl callback before the dispatch loop so no
+  // handshake is dropped in the gap between cycle N's remove_callback() and
+  // cycle N+1's add_callback() (same pattern as m_tr_prebuf_rx for kPubSub).
+  if (!m_cx.trwriter_ctrl.empty()) {
+    m_write_tr_ctrl_rx =
+        dunedaq::get_iom_receiver<dunedaq::datafilter::Handshake>(
+            m_cx.trwriter_ctrl.front());
+    m_write_tr_ctrl_rx->add_callback(
+        [this](dunedaq::datafilter::Handshake msg) {
+          if (msg.msg_id == "write_tr") {
+            std::lock_guard<std::mutex> lk(m_write_tr_prebuf_mtx);
+            m_write_tr_prebuf.push(std::move(msg));
+            m_write_tr_prebuf_cv.notify_one();
+          }
+        });
+  }
+
+  while (m_running.load()) {
     // Wait until DF signals a new dispatch via bookkeeping1.
-    // This prevents receive_tr_single_connection() from sending repeated
-    // kFileCompleted messages when no pipeline cycle is active.
     {
       std::unique_lock<std::mutex> lk(m_dispatch_mutex);
       m_dispatch_cv.wait(lk, [this] {
-        return m_dispatch_ready.load(std::memory_order_acquire);
+        return m_dispatch_ready.load(std::memory_order_acquire) ||
+               !m_running.load();
       });
+      if (!m_running.load())
+        break;
       m_dispatch_ready.store(false, std::memory_order_release);
     }
     TLOG() << "FRW: dispatch gate passed — starting TR/TS receive cycle";
-    receive_tr_single_connection();
-    receive_ts_single_connection();
+    std::thread tr_thread([this] {
+      if (!m_cx.tr_data_rx.empty())
+        receive_tr_single_connection();
+    });
+    std::thread ts_thread([this] {
+      if (!m_cx.ts_data_rx.empty())
+        receive_ts_single_connection();
+    });
+    tr_thread.join();
+    ts_thread.join();
   }
+  TLOG() << "FRW: do_start() dispatch loop exiting";
 }
 void FilterResultWriter::do_stop(const data_t &) {
-  // m_thread.stop_working_thread();
-  m_bk_thread.stop_working_thread();
-}
+  m_running.store(false);
+  m_dispatch_cv.notify_all();
 
-void FilterResultWriter::do_work(std::atomic<bool> &running) {
-  std::mutex work_mutex;
-  std::condition_variable work_cv;
-
-  while (running.load()) {
-    // receive_tr();
-    receive_tr_single_connection();
-    receive_ts_single_connection();
-
-    std::unique_lock<std::mutex> lock(work_mutex);
-    work_cv.wait_for(lock, std::chrono::seconds(1), [&]() {
-      return !running.load(); // check for new work availability
-    });
+  // Wake drain loops so they see m_running==false and exit.
+  // Callbacks remain registered so ZMQ SUB stays subscribed for the next run.
+  m_ts_prebuf_cv.notify_all();
+  m_tr_prebuf_cv.notify_all();
+  m_write_tr_prebuf_cv.notify_all();
+  {
+    std::lock_guard<std::mutex> lk(m_ts_prebuf_mtx);
+    while (!m_ts_prebuf.empty())
+      m_ts_prebuf.pop();
   }
+  {
+    std::lock_guard<std::mutex> lk(m_tr_prebuf_mtx);
+    while (!m_tr_prebuf.empty())
+      m_tr_prebuf.pop();
+  }
+  {
+    std::lock_guard<std::mutex> lk(m_write_tr_prebuf_mtx);
+    while (!m_write_tr_prebuf.empty())
+      m_write_tr_prebuf.pop();
+  }
+  if (m_write_tr_ctrl_rx) {
+    m_write_tr_ctrl_rx->remove_callback();
+    m_write_tr_ctrl_rx.reset();
+  }
+
+  m_bk_thread.stop_working_thread();
 }
 
 std::string
@@ -202,6 +289,10 @@ void FilterResultWriter::receive_attrs(std::atomic<bool> &running) {
 
   std::function<void(dunedaq::datafilter::BookKeeping &)> cb =
       [&](dunedaq::datafilter::BookKeeping bk) {
+        // Update run_number from every BK so TS-only mode gets the right value.
+        if (bk.run_number > 0)
+          m_run_number.store(bk.run_number);
+
         // Find "file_index" and update (keep this fast)
         for (const auto &kv : bk.file_attributes_info) {
           if (kv.first == "file_index") {
@@ -244,378 +335,30 @@ void FilterResultWriter::receive_attrs(std::atomic<bool> &running) {
   TLOG() << "BookKeeping receive_attrs exiting";
 }
 
-void FilterResultWriter::receive_tr() {
-  std::mutex cv_mutex;
-  std::condition_variable cv;
-  bool handshake_done = false;
-
-  if (m_cx.trwriter_ctrl.empty()) {
-    TLOG()
-        << "FRW: no trwriter_ctrl endpoints; cannot receive 'write_tr' control";
-    return;
-  }
-  const std::string &trw_ctrl_uid = m_cx.trwriter_ctrl.front();
-
-  auto cb_receiver =
-      dunedaq::get_iom_receiver<dunedaq::datafilter::Handshake>(trw_ctrl_uid);
-  std::function<void(dunedaq::datafilter::Handshake)> str_receiver_cb =
-      [&](dunedaq::datafilter::Handshake msg) {
-        if (msg.msg_id == "write_tr") {
-          m_num_messages = msg.total_tr;
-          std::lock_guard<std::mutex> lock(cv_mutex);
-          handshake_done = true;
-          cv.notify_one();
-        }
-        TLOG_DEBUG(5) << "FilterResultWriter: TR receiver callback: "
-                      << msg.msg_id;
-      };
-
-  cb_receiver->add_callback(str_receiver_cb);
-
-  {
-    std::unique_lock<std::mutex> lock(cv_mutex);
-    cv.wait_for(lock, std::chrono::seconds(30), [&] { return handshake_done; });
-  }
-
-  if (!handshake_done) {
-    TLOG() << "Warning: Handshake timeout";
-  }
-
-  TLOG_DEBUG(5) << "Setting up TRWriterInfo objects";
-  for (size_t group = 0; group < m_num_groups; ++group) {
-    for (size_t conn = 0; conn < m_num_connections_per_group; ++conn) {
-      subscribers.push_back(std::make_shared<SubscriberInfo>(group, conn));
-    }
-  }
-
-  dunedaq::datafilter::time_point_to_string time_point_to_string(
-      dunedaq::datafilter::Precision::NANOSECONDS);
-  auto t1 = std::chrono::system_clock::now();
-  dunedaq::datafilter::BookKeeping bk_info("bookkeeping0");
-  bk_info.entry_id = time_point_to_string(t1);
-  bk_info.conn_id = m_init_connection;
-  bk_info.from_id = "FilterResultWriter";
-
-  HDF5FileLayoutParameters fl_pars = create_file_layout_params();
-  auto srcid_geoid_map = create_srcid_geoid_map();
-
-  std::atomic<std::chrono::steady_clock::time_point> last_received =
-      std::chrono::steady_clock::now();
-
-  TLOG_DEBUG(5) << "Adding callbacks for each subscriber";
-  for (auto subscriber : subscribers) {
-    TLOG() << "subscriber ====> " << subscriber;
-  }
-
-  // Use condition variable for completion signaling
-  std::mutex completion_mutex;
-  std::condition_variable completion_cv;
-
-  // Collect all written file pathnames for bookkeeping
-  std::mutex pathnames_mutex;
-  std::vector<std::string> written_pathnames;
-
-  // Global counter for all received messages across all subscribers
-  std::atomic<size_t> total_msgs_received{0};
-  size_t total_expected =
-      m_num_messages; // m_num_messages will be reset after completion
-
-  for (auto info : subscribers) {
-    // Build unique connection name for this subscriber
-    std::string conn_name = "conn_A1_G" + std::to_string(info->group_id) +
-                            "_C" + std::to_string(info->conn_id) + "_";
-
-    TLOG() << "Setting up subscriber with connection: " << conn_name;
-
-    auto recv_proc = [=, &last_received, &completion_mutex, &completion_cv,
-                      &pathnames_mutex, &written_pathnames,
-                      &total_msgs_received,
-                      conn_name](trigger_record_ptr_t &tr) {
-      m_trigger_timestamp =
-          tr->get_fragments_ref().at(0)->get_trigger_timestamp();
-      m_trigger_number = tr->get_fragments_ref().at(0)->get_trigger_number();
-      m_run_number = tr->get_fragments_ref().at(0)->get_run_number();
-      size_t file_index = get_file_index();
-
-      TLOG() << "run_number " << m_run_number << " file index: " << file_index
-             << ", trigger number: " << m_trigger_number;
-
-      // Increment both local and global counters
-      info->msgs_received++;
-      size_t current_total = ++total_msgs_received;
-      last_received = std::chrono::steady_clock::now();
-
-      TLOG() << "Subscriber msgs: " << info->msgs_received
-             << ", Total received: " << current_total << "/" << total_expected;
-
-      // Write every trigger record to its own file
-      std::string app_name = "test";
-      std::string file_pathname_prefix = m_odir + "/" + m_output_h5_filename;
-
-      // Generate unique filename for this trigger record
-      std::string file_base = generate_hdf5file_pathname(
-          file_pathname_prefix, m_run_number, file_index, m_trigger_number);
-      std::string writing_pathname = file_base + ".filtered.writing";
-      std::string final_pathname = file_base + ".filtered.hdf5";
-
-      TLOG() << "Writing TR " << current_total << "/" << total_expected
-             << " to " << writing_pathname;
-
-      if (!has_enough_space(m_odir, m_min_free_bytes)) {
-        TLOG() << "Skipping TR write — insufficient storage in " << m_odir;
-        return;
-      }
-
-      unsigned compression_level = 0;
-
-      try {
-        std::unique_ptr<HDF5RawDataFile> h5file_ptr(new HDF5RawDataFile(
-            writing_pathname, m_run_number, m_file_index, app_name, fl_pars,
-            srcid_geoid_map, compression_level, ""));
-
-        h5file_ptr->write(*tr);
-        h5file_ptr.reset();
-
-        std::filesystem::rename(writing_pathname, final_pathname);
-        TLOG() << "Successfully wrote TR " << current_total
-               << " with trigger_number " << m_trigger_number
-               << " -> " << final_pathname;
-
-        // Store pathname for bookkeeping
-        {
-          std::lock_guard<std::mutex> lock(pathnames_mutex);
-          written_pathnames.push_back(final_pathname);
-        }
-
-        // Send bookkeeping for this individual TR
-        dunedaq::datafilter::BookKeeping bk_info("bookkeeping0");
-        bk_info.entry_id =
-            time_point_to_string(std::chrono::system_clock::now());
-        bk_info.conn_id = m_init_connection;
-        bk_info.from_id = "FilterResultWriter";
-        bk_info.tr_status = to_string(TRStatus::kReRecorded);
-        bk_info.run_number = m_run_number;
-        bk_info.tr_header_info.push_back(
-            {"run_number", std::to_string(m_run_number)});
-        bk_info.tr_header_info.push_back(
-            {"trigger_number", std::to_string(m_trigger_number)});
-        bk_info.tr_header_info.push_back(
-            {"trigger_timestamp", std::to_string(m_trigger_timestamp)});
-        bk_info.tr_header_info.push_back({"tr_writer_pathname", final_pathname});
-        bk_info.tr_header_info.push_back({"connection_name", conn_name});
-        bk_info.tr_header_info.push_back(
-            {"tr_count", std::to_string(current_total) + "/" +
-                             std::to_string(total_expected)});
-
-        if (m_cx.bk_outputs.empty()) {
-          TLOG() << "FRW: no bookkeeping outputs configured; skip BK update";
-        } else {
-          auto bookkeeping_sender =
-              dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(
-                  m_cx.bk_outputs.front());
-          bookkeeping_sender->send(std::move(bk_info), Sender::s_block);
-        }
-        // auto bookkeeping_sender =
-        // dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(
-        // "bookkeeping0");
-        // bookkeeping_sender->send(std::move(bk_info), Sender::s_block);
-      } catch (const std::exception &e) {
-        TLOG() << "ERROR writing TR: " << e.what();
-
-        // Send error bookkeeping
-        dunedaq::datafilter::BookKeeping bk_error("bookkeeping0");
-        bk_error.entry_id =
-            time_point_to_string(std::chrono::system_clock::now());
-        bk_error.conn_id = m_init_connection;
-        bk_error.from_id = "FilterResultWriter";
-        bk_error.tr_status = to_string(TRStatus::kWriteFailed);
-        bk_error.run_number = m_run_number;
-        bk_error.tr_header_info.push_back(
-            {"run_number", std::to_string(m_run_number)});
-        bk_error.tr_header_info.push_back(
-            {"trigger_number", std::to_string(m_trigger_number)});
-        bk_error.tr_header_info.push_back({"error", e.what()});
-
-        auto bookkeeping_sender =
-            dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(
-                m_cx.bk_outputs.front());
-        bookkeeping_sender->send(std::move(bk_error), Sender::s_block);
-      }
-
-      // Check if all expected messages have been received
-      if (current_total >= total_expected) {
-        TLOG() << "All " << total_expected << " TRs received and written";
-        info->complete = true;
-
-        // Notify that a subscriber completed
-        {
-          std::lock_guard<std::mutex> lock(completion_mutex);
-          completion_cv.notify_one();
-        }
-      }
-    };
-
-    m_init_connection = "conn_A1_G0_C0_";
-    auto before_receiver = std::chrono::steady_clock::now();
-    auto receiver = dunedaq::get_iom_receiver<
-        std::unique_ptr<dunedaq::daqdataformats::TriggerRecord>>(
-        m_init_connection);
-    auto after_receiver = std::chrono::steady_clock::now();
-    receiver->add_callback(recv_proc);
-    auto after_callback = std::chrono::steady_clock::now();
-    info->get_receiver_time =
-        std::chrono::duration_cast<std::chrono::milliseconds>(after_receiver -
-                                                              before_receiver);
-    info->add_callback_time =
-        std::chrono::duration_cast<std::chrono::milliseconds>(after_callback -
-                                                              after_receiver);
-  }
-
-  TLOG_DEBUG(5) << "Starting wait loop for receives to complete";
-
-  // Wait for total expected messages with timeout
-  {
-    std::unique_lock<std::mutex> lock(completion_mutex);
-    bool completed =
-        completion_cv.wait_for(lock, std::chrono::seconds(60), [&]() {
-          size_t current = total_msgs_received.load();
-          TLOG_DEBUG(6) << "Total received: " << current
-                        << ", expected: " << total_expected;
-          return current >= total_expected;
-        });
-
-    if (!completed) {
-      TLOG() << "WARNING: Timeout waiting for all TRs. Received "
-             << total_msgs_received.load() << "/" << total_expected;
-      TLOG() << "Check if sender is still sending or connection names match";
-    }
-  }
-
-  // ACK to datafilter that all TRs have been written — sent AFTER the 60s
-  // wait so written_pathnames.size() reflects the actual write outcome.
-  TLOG() << "Send final bookkeeping info to datafilter server";
-  TLOG() << "Total files written: " << written_pathnames.size();
-  TLOG() << "Expected: " << total_expected
-         << ", Actual: " << total_msgs_received.load();
-
-  if (written_pathnames.size() < total_expected) {
-    TLOG() << "WARNING: Missing " << (total_expected - written_pathnames.size())
-           << " TRs!";
-  }
-
-  dunedaq::datafilter::BookKeeping final_bk_info("bookkeeping0");
-  final_bk_info.entry_id =
-      time_point_to_string(std::chrono::system_clock::now());
-  final_bk_info.conn_id = m_init_connection;
-  final_bk_info.from_id = "FilterResultWriter";
-  // kFileCompleted only when all TRs were written; kWriteFailed otherwise
-  // (e.g. storage full caused some or all writes to be skipped).
-  final_bk_info.tr_status =
-      (written_pathnames.size() >= total_expected)
-          ? to_string(TRStatus::kFileCompleted)
-          : to_string(TRStatus::kWriteFailed);
-  final_bk_info.run_number = m_run_number;
-  final_bk_info.tr_header_info.push_back(
-      {"run_number", std::to_string(m_run_number)});
-  final_bk_info.tr_header_info.push_back(
-      {"total_trs_written", std::to_string(written_pathnames.size())});
-  final_bk_info.tr_header_info.push_back(
-      {"expected_trs", std::to_string(total_expected)});
-
-  // Add all file pathnames to bookkeeping
-  for (size_t i = 0; i < written_pathnames.size(); ++i) {
-    final_bk_info.tr_header_info.push_back(
-        {"file_" + std::to_string(i), written_pathnames[i]});
-  }
-
-  auto final_bookkeeping_sender =
-      dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(
-          m_cx.bk_outputs.front());
-  final_bookkeeping_sender->send(std::move(final_bk_info), Sender::s_block);
-
-  // Confirmation to TRDispatcher is now forwarded by DataFilter's
-  // BookkeepingReceiver when it detects this kFileCompleted/kWriteFailed message.
-  // FRW no longer sends directly to TRD.
-
-  TLOG_DEBUG(5) << "Removing callbacks";
-  for (auto &info : subscribers) {
-    std::string conn_name = "conn_A1_G" + std::to_string(info->group_id) +
-                            "_C" + std::to_string(info->conn_id) + "_";
-    auto receiver = dunedaq::get_iom_receiver<trigger_record_ptr_t>(conn_name);
-    receiver->remove_callback();
-  }
-
-  auto cb_receiver1 =
-      dunedaq::get_iom_receiver<dunedaq::datafilter::Handshake>(trw_ctrl_uid);
-  cb_receiver1->remove_callback();
-
-  subscribers.clear();
-  TLOG_DEBUG(5) << "receive() done";
-}
-
 void FilterResultWriter::receive_tr_single_connection() {
-  std::mutex cv_mutex;
-  std::condition_variable cv;
   bool handshake_done = false;
 
   // Reset per-call state so a stale m_num_messages from a previous call does
-  // not carry into this call's bookkeeping (which would make a timed-out
-  // second call look like a real 27-TR failure).
+  // not carry into this call's bookkeeping.
   m_num_messages.store(0);
 
-  if (m_cx.trwriter_ctrl.empty()) {
-    TLOG()
-        << "FRW: no trwriter_ctrl endpoints; cannot receive 'write_tr' control";
-    return;
-  }
-  const std::string &trw_ctrl_uid = m_cx.trwriter_ctrl.front();
-
-  auto cb_receiver =
-      dunedaq::get_iom_receiver<dunedaq::datafilter::Handshake>(trw_ctrl_uid);
-  std::function<void(dunedaq::datafilter::Handshake)> str_receiver_cb =
-      [&](dunedaq::datafilter::Handshake msg) {
-        if (msg.msg_id == "write_tr") {
-          m_num_messages = msg.total_tr;
-          std::lock_guard<std::mutex> lock(cv_mutex);
-          handshake_done = true;
-          cv.notify_one();
-        }
-        TLOG() << "FilterResultWriter: TR receiver callback: " << msg.msg_id;
-      };
-
-  cb_receiver->add_callback(str_receiver_cb);
-
+  // Drain write_tr from the always-on prebuf (registered in do_start()).
   {
-    std::unique_lock<std::mutex> lock(cv_mutex);
-    cv.wait_for(lock, std::chrono::seconds(10), [&] { return handshake_done; });
+    std::unique_lock<std::mutex> lk(m_write_tr_prebuf_mtx);
+    handshake_done =
+        m_write_tr_prebuf_cv.wait_for(lk, std::chrono::seconds(10), [this] {
+          return !m_write_tr_prebuf.empty();
+        });
+    if (handshake_done) {
+      auto &msg = m_write_tr_prebuf.front();
+      m_num_messages = msg.total_tr;
+      TLOG() << "FilterResultWriter: TR receiver callback: " << msg.msg_id;
+      m_write_tr_prebuf.pop();
+    }
   }
 
   if (!handshake_done) {
-    TLOG() << "FRW: no 'write_tr' received (all TRs filtered or DF silent)."
-           << " Sending kFileCompleted(0) to DF so TRD is not left waiting.";
-    cb_receiver->remove_callback();
-    // Notify DF that this cycle produced no output (kFileCompleted, 0 TRs
-    // written).  DF will translate this to kReRecorded and forward to TRD,
-    // unblocking the 300-second confirmation wait without a write_failed.
-    if (!m_cx.bk_outputs.empty()) {
-      try {
-        dunedaq::datafilter::BookKeeping no_output(m_cx.bk_outputs.front());
-        no_output.entry_id =
-            dunedaq::datafilter::time_point_to_string(
-                dunedaq::datafilter::Precision::NANOSECONDS)(
-                std::chrono::system_clock::now());
-        no_output.from_id  = "FilterResultWriter";
-        no_output.tr_status = to_string(TRStatus::kFileCompleted);
-        no_output.tr_header_info.push_back({"total_trs_written", "0"});
-        no_output.tr_header_info.push_back({"reason", "all_filtered_or_no_write_tr"});
-        auto bk_sender =
-            dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(
-                m_cx.bk_outputs.front());
-        bk_sender->send(std::move(no_output), Sender::s_block);
-      } catch (const std::exception &e) {
-        TLOG() << "FRW: failed to send kFileCompleted(0) to DF: " << e.what();
-      }
-    }
+    TLOG() << "FRW: no write_tr handshake received; skipping";
     return;
   }
 
@@ -639,33 +382,54 @@ void FilterResultWriter::receive_tr_single_connection() {
   std::atomic<size_t> total_msgs_received{0};
   size_t total_expected = m_num_messages;
 
-  std::mutex completion_mutex;
-  std::condition_variable completion_cv;
+  struct TRWriteRecord {
+    std::string pathname;
+    size_t trigger_number;
+    size_t trigger_timestamp;
+  };
   std::mutex pathnames_mutex;
-  std::vector<std::string> written_pathnames;
+  std::vector<TRWriteRecord> written_trs;
 
   dunedaq::datafilter::time_point_to_string time_point_to_string(
       dunedaq::datafilter::Precision::NANOSECONDS);
 
-  // Single callback that processes ALL TRs
-  auto recv_proc = [&, fl_pars, srcid_geoid_map](trigger_record_ptr_t &tr) {
+  // Drain from the always-on prebuf (registered in do_start() before the
+  // dispatch gate) so data received before this call is not lost.
+  TLOG() << "Waiting for " << total_expected << " TRs from prebuf...";
+  const auto tr_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(120);
+  while (m_running.load()) {
+    trigger_record_ptr_t tr;
+    {
+      std::unique_lock<std::mutex> lk(m_tr_prebuf_mtx);
+      bool got = m_tr_prebuf_cv.wait_until(lk, tr_deadline, [this] {
+        return !m_tr_prebuf.empty() || !m_running.load();
+      });
+      if (!m_running.load() || m_tr_prebuf.empty())
+        break;
+      tr = std::move(m_tr_prebuf.front());
+      m_tr_prebuf.pop();
+    }
+
     m_trigger_timestamp =
         tr->get_fragments_ref().at(0)->get_trigger_timestamp();
     m_trigger_number = tr->get_fragments_ref().at(0)->get_trigger_number();
-    m_run_number = tr->get_fragments_ref().at(0)->get_run_number();
+    m_run_number.store(tr->get_fragments_ref().at(0)->get_run_number());
     size_t file_index = get_file_index();
 
     size_t current_total = ++total_msgs_received;
 
     TLOG() << "Received TR " << current_total << "/" << total_expected
-           << " - run: " << m_run_number << ", trigger: " << m_trigger_number
+           << " - run: " << m_run_number.load()
+           << ", trigger: " << m_trigger_number
            << ", file_index: " << file_index;
 
     // Write each TR to its own file
     std::string app_name = "test";
     std::string file_pathname_prefix = m_odir + "/" + m_output_h5_filename;
-    std::string file_base = generate_hdf5file_pathname(
-        file_pathname_prefix, m_run_number, file_index, m_trigger_number);
+    std::string file_base =
+        generate_hdf5file_pathname(file_pathname_prefix, m_run_number.load(),
+                                   file_index, m_trigger_number);
     std::string writing_pathname = file_base + ".filtered.writing";
     std::string final_pathname = file_base + ".filtered.hdf5";
 
@@ -681,46 +445,22 @@ void FilterResultWriter::receive_tr_single_connection() {
 
     try {
       std::unique_ptr<HDF5RawDataFile> h5file_ptr(new HDF5RawDataFile(
-          writing_pathname, m_run_number, m_file_index, app_name, fl_pars,
-          srcid_geoid_map, compression_level, ""));
+          writing_pathname, m_run_number.load(), m_file_index, app_name,
+          fl_pars, srcid_geoid_map, compression_level, ""));
 
       h5file_ptr->write(*tr);
       h5file_ptr.reset();
 
       std::filesystem::rename(writing_pathname, final_pathname);
       TLOG() << "Successfully wrote TR " << current_total
-             << " with trigger_number " << m_trigger_number
-             << " -> " << final_pathname;
+             << " with trigger_number " << m_trigger_number << " -> "
+             << final_pathname;
 
-      // Store pathname
       {
         std::lock_guard<std::mutex> lock(pathnames_mutex);
-        written_pathnames.push_back(final_pathname);
+        written_trs.push_back(
+            {final_pathname, m_trigger_number, m_trigger_timestamp});
       }
-
-      // Send bookkeeping
-      dunedaq::datafilter::BookKeeping bk_info("bookkeeping0");
-      bk_info.entry_id = time_point_to_string(std::chrono::system_clock::now());
-      bk_info.conn_id = single_connection;
-      bk_info.from_id = "FilterResultWriter";
-      bk_info.tr_status = to_string(TRStatus::kReRecorded);
-      bk_info.run_number = m_run_number;
-      bk_info.tr_header_info.push_back(
-          {"run_number", std::to_string(m_run_number)});
-      bk_info.tr_header_info.push_back(
-          {"trigger_number", std::to_string(m_trigger_number)});
-      bk_info.tr_header_info.push_back(
-          {"trigger_timestamp", std::to_string(m_trigger_timestamp)});
-      bk_info.tr_header_info.push_back({"tr_writer_pathname", final_pathname});
-      bk_info.tr_header_info.push_back({"connection_name", single_connection});
-      bk_info.tr_header_info.push_back(
-          {"tr_count", std::to_string(current_total) + "/" +
-                           std::to_string(total_expected)});
-
-      auto bookkeeping_sender =
-          dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(
-              m_cx.bk_outputs.front());
-      bookkeeping_sender->send(std::move(bk_info), Sender::s_block);
 
     } catch (const std::exception &e) {
       TLOG() << "ERROR writing TR: " << e.what();
@@ -731,9 +471,9 @@ void FilterResultWriter::receive_tr_single_connection() {
       bk_error.conn_id = single_connection;
       bk_error.from_id = "FilterResultWriter";
       bk_error.tr_status = to_string(TRStatus::kWriteFailed);
-      bk_error.run_number = m_run_number;
+      bk_error.run_number = m_run_number.load();
       bk_error.tr_header_info.push_back(
-          {"run_number", std::to_string(m_run_number)});
+          {"run_number", std::to_string(m_run_number.load())});
       bk_error.tr_header_info.push_back(
           {"trigger_number", std::to_string(m_trigger_number)});
       bk_error.tr_header_info.push_back({"error", e.what()});
@@ -747,42 +487,24 @@ void FilterResultWriter::receive_tr_single_connection() {
     // Check if all expected messages received
     if (current_total >= total_expected) {
       TLOG() << "All " << total_expected << " TRs received and written";
-      std::lock_guard<std::mutex> lock(completion_mutex);
-      completion_cv.notify_one();
+      break;
     }
-  };
+  }
 
-  // Set up single receiver
-  auto receiver = dunedaq::get_iom_receiver<
-      std::unique_ptr<dunedaq::daqdataformats::TriggerRecord>>(
-      single_connection);
-  receiver->add_callback(recv_proc);
-
-  TLOG() << "Callback registered, waiting for " << total_expected << " TRs...";
-
-  // Wait for all TRs
-  {
-    std::unique_lock<std::mutex> lock(completion_mutex);
-    bool completed =
-        completion_cv.wait_for(lock, std::chrono::seconds(120), [&]() {
-          return total_msgs_received.load() >= total_expected;
-        });
-
-    if (!completed) {
-      TLOG() << "WARNING: Timeout waiting for all TRs. Received "
-             << total_msgs_received.load() << "/" << total_expected;
-    }
+  if (total_msgs_received.load() < total_expected) {
+    TLOG() << "WARNING: Timeout or stop before all TRs received. Got "
+           << total_msgs_received.load() << "/" << total_expected;
   }
 
   if (total_expected > 0) {
     // Send final bookkeeping
     TLOG() << "Send final bookkeeping info to datafilter server";
-    TLOG() << "Total files written: " << written_pathnames.size();
+    TLOG() << "Total files written: " << written_trs.size();
     TLOG() << "Expected: " << total_expected
            << ", Actual: " << total_msgs_received.load();
 
     const size_t actually_received = total_msgs_received.load();
-    const size_t actually_written  = written_pathnames.size();
+    const size_t actually_written = written_trs.size();
 
     if (actually_received < total_expected) {
       TLOG() << "FRW: received " << actually_received << "/" << total_expected
@@ -803,13 +525,12 @@ void FilterResultWriter::receive_tr_single_connection() {
     // Upstream filtering (DF dropping TRs before forwarding) is normal and
     // does NOT constitute a write failure — use actually_received, not
     // total_expected (which reflects TRD's original dispatch count).
-    final_bk_info.tr_status =
-        (actually_written >= actually_received)
-            ? to_string(TRStatus::kFileCompleted)
-            : to_string(TRStatus::kWriteFailed);
-    final_bk_info.run_number = m_run_number;
+    final_bk_info.tr_status = (actually_written >= actually_received)
+                                  ? to_string(TRStatus::kFileCompleted)
+                                  : to_string(TRStatus::kWriteFailed);
+    final_bk_info.run_number = m_run_number.load();
     final_bk_info.tr_header_info.push_back(
-        {"run_number", std::to_string(m_run_number)});
+        {"run_number", std::to_string(m_run_number.load())});
     final_bk_info.tr_header_info.push_back(
         {"total_trs_written", std::to_string(actually_written)});
     final_bk_info.tr_header_info.push_back(
@@ -824,7 +545,13 @@ void FilterResultWriter::receive_tr_single_connection() {
 
     for (size_t i = 0; i < actually_written; ++i) {
       final_bk_info.tr_header_info.push_back(
-          {"file_" + std::to_string(i), written_pathnames[i]});
+          {"file_" + std::to_string(i), written_trs[i].pathname});
+      final_bk_info.tr_header_info.push_back(
+          {"trigger_number_" + std::to_string(i),
+           std::to_string(written_trs[i].trigger_number)});
+      final_bk_info.tr_header_info.push_back(
+          {"trigger_timestamp_" + std::to_string(i),
+           std::to_string(written_trs[i].trigger_timestamp)});
     }
 
     auto final_bookkeeping_sender =
@@ -833,11 +560,6 @@ void FilterResultWriter::receive_tr_single_connection() {
     final_bookkeeping_sender->send(std::move(final_bk_info), Sender::s_block);
   }
 
-  // Cleanup
-  receiver->remove_callback();
-  cb_receiver->remove_callback();
-
-  // reset total_expected with m_num_messsages
   m_num_messages = 0;
   TLOG_DEBUG(5) << "receive_tr_single_connection() done";
 }
@@ -875,7 +597,7 @@ void FilterResultWriter::receive_ts_single_connection() {
     }
     ctrl_rx->remove_callback();
     if (!handshake_done) {
-      TLOG_DEBUG(7) << "FRW: no write_ts handshake received; skipping";
+      TLOG() << "FRW: no write_ts handshake received; skipping";
       return;
     }
   }
@@ -896,71 +618,114 @@ void FilterResultWriter::receive_ts_single_connection() {
   auto srcid_geoid_map = create_srcid_geoid_map();
 
   const std::string &ts_conn = m_cx.ts_data_rx.front();
-  TLOG() << "Listening for TimeSlices on: " << ts_conn
-         << " expecting " << ts_expected.load();
+  TLOG() << "Listening for TimeSlices on: " << ts_conn << " expecting "
+         << ts_expected.load();
 
   std::atomic<size_t> ts_received{0};
-  std::mutex completion_mutex;
-  std::condition_variable completion_cv;
+  std::atomic<size_t> ts_written{0};
+  std::vector<std::string> written_ts_pathnames;
 
   dunedaq::datafilter::time_point_to_string time_point_to_string(
       dunedaq::datafilter::Precision::NANOSECONDS);
 
-  auto ts_cb = [&, ts_fl_pars, srcid_geoid_map](timeslice_ptr_t &ts) {
-    size_t current = ++ts_received;
+  // Drain from the always-on prebuf (registered in do_start() before the
+  // dispatch gate) so data received before this function was called is not
+  // lost.
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(120);
+  while (m_running.load()) {
+    timeslice_ptr_t ts;
+    {
+      std::unique_lock<std::mutex> lk(m_ts_prebuf_mtx);
+      bool got = m_ts_prebuf_cv.wait_until(lk, deadline, [this] {
+        return !m_ts_prebuf.empty() || !m_running.load();
+      });
+      if (!m_running.load() || m_ts_prebuf.empty())
+        break;
+      ts = std::move(m_ts_prebuf.front());
+      m_ts_prebuf.pop();
+    }
+
+    ++ts_received;
     auto ts_number = ts->get_header().timeslice_number;
+    size_t current = ts_received.load();
 
     TLOG() << "Received TS " << current << "/" << ts_expected.load()
            << " ts_number=" << ts_number;
 
-    std::string file_pathname_prefix = m_odir + "/" + m_output_h5_filename;
+    // Prefix with "_ts" to keep TS filenames distinct from TR filenames,
+    // which use the same run/file_index/sequence scheme.
+    std::string file_pathname_prefix =
+        m_odir + "/" + m_output_h5_filename + "_ts";
     std::string file_base = generate_hdf5file_pathname(
-        file_pathname_prefix, m_run_number, get_file_index(), ts_number);
+        file_pathname_prefix, m_run_number.load(), get_file_index(), ts_number);
     std::string writing_pathname = file_base + ".filtered.writing";
     std::string final_pathname = file_base + ".filtered.hdf5";
 
     if (!has_enough_space(m_odir, m_min_free_bytes)) {
       TLOG() << "Skipping TS write — insufficient storage in " << m_odir;
-      return;
-    }
-
-    unsigned compression_level = 0;
-    try {
-      std::unique_ptr<HDF5RawDataFile> h5file_ptr(new HDF5RawDataFile(
-          writing_pathname, m_run_number, get_file_index(), "test",
-          ts_fl_pars, srcid_geoid_map, compression_level, ""));
-
-      h5file_ptr->write(*ts);
-      h5file_ptr.reset();
-
-      std::filesystem::rename(writing_pathname, final_pathname);
-      TLOG() << "Successfully wrote TS " << current
-             << " ts_number=" << ts_number << " -> " << final_pathname;
-    } catch (const std::exception &e) {
-      TLOG() << "ERROR writing TS: " << e.what();
+    } else {
+      unsigned compression_level = 0;
+      try {
+        std::unique_ptr<HDF5RawDataFile> h5file_ptr(new HDF5RawDataFile(
+            writing_pathname, m_run_number.load(), get_file_index(), "test",
+            ts_fl_pars, srcid_geoid_map, compression_level, ""));
+        h5file_ptr->write(*ts);
+        h5file_ptr.reset();
+        std::filesystem::rename(writing_pathname, final_pathname);
+        ++ts_written;
+        written_ts_pathnames.push_back(final_pathname);
+        TLOG() << "Successfully wrote TS " << current
+               << " ts_number=" << ts_number << " -> " << final_pathname;
+      } catch (const std::exception &e) {
+        TLOG() << "ERROR writing TS: " << e.what();
+      }
     }
 
     if (ts_expected.load() > 0 && current >= ts_expected.load()) {
       TLOG() << "All " << ts_expected.load() << " TSs received and written";
-      std::lock_guard<std::mutex> lock(completion_mutex);
-      completion_cv.notify_one();
+      break;
     }
-  };
-
-  auto receiver = dunedaq::get_iom_receiver<timeslice_ptr_t>(ts_conn);
-  receiver->add_callback(ts_cb);
-
-  // Wait for completion
-  if (ts_expected.load() > 0) {
-    std::unique_lock<std::mutex> lock(completion_mutex);
-    completion_cv.wait(lock,
-                       [&] { return ts_received.load() >= ts_expected.load(); });
   }
 
-  receiver->remove_callback();
+  // Notify DF of TS batch completion; DF's BookkeepingReceiver translates this
+  // to kReRecorded and forwards to TRD on bookkeeping2.
+  if (!m_cx.bk_outputs.empty()) {
+    const bool all_written =
+        (ts_expected.load() > 0) && (ts_written.load() >= ts_expected.load());
+    const auto ts_status = all_written ? to_string(TRStatus::kFileCompleted)
+                                       : to_string(TRStatus::kWriteFailed);
+    dunedaq::datafilter::BookKeeping ts_bk(m_cx.bk_outputs.front());
+    ts_bk.entry_id = time_point_to_string(std::chrono::system_clock::now());
+    ts_bk.from_id = "FilterResultWriter";
+    ts_bk.run_number = m_run_number.load();
+    ts_bk.tr_status = ts_status;
+    ts_bk.tr_header_info.push_back(
+        {"total_ts_written", std::to_string(ts_written.load())});
+    ts_bk.tr_header_info.push_back(
+        {"expected_ts", std::to_string(ts_expected.load())});
+    for (size_t i = 0; i < written_ts_pathnames.size(); ++i) {
+      ts_bk.tr_header_info.push_back(
+          {"ts_file_" + std::to_string(i), written_ts_pathnames[i]});
+    }
+    try {
+      auto bk_sender =
+          dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(
+              m_cx.bk_outputs.front());
+      bk_sender->send(std::move(ts_bk), Sender::s_block);
+      TLOG() << "FRW: sent TS completion BK (" << ts_status << ") to DF"
+             << " ts_received=" << ts_received.load()
+             << " ts_expected=" << ts_expected.load();
+    } catch (const std::exception &e) {
+      TLOG() << "FRW: TS completion BK send failed: " << e.what();
+    }
+  }
+
   TLOG_DEBUG(5) << "receive_ts_single_connection() done";
 }
 
+// DF should alway send next_tr, so it is not used here. It will be removed in
+// next cleanup.
 void FilterResultWriter::send_next_tr() {
   bool handshake_done = false;
 
@@ -1029,6 +794,7 @@ void FilterResultWriter::receive_attrs_test() {
   receiver->remove_callback();
 }
 
+// Using thread instead. It is not used
 void FilterResultWriter::start_receive_attrs_test_thread() {
   // prevent double-start
   bool was_running =

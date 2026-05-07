@@ -19,55 +19,60 @@ namespace dunedaq::datafilter {
  *   - *_ctrl: Control/handshake channel
  */
 struct Connections {
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------------------------
   // Control / Request Channels (Handshake messages)
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------------------------
 
   // FilterOrchestrator control (df_ready notification)
   std::vector<std::string> fo_ctrl;
 
   // TRDispatcher request channels
-  std::vector<std::string> trdispatcher_req_rx;  // TRDispatcher receives requests
-  std::vector<std::string> trdispatcher_req_tx;  // DataFilter sends requests (via FO)
+  std::vector<std::string>
+      trdispatcher_req_rx; // TRDispatcher receives requests
+  std::vector<std::string>
+      trdispatcher_req_tx; // DataFilter sends requests (via FO)
 
   // TSDispatcher request channels (for TimeSlice dispatcher)
-  std::vector<std::string> tsdispatcher_req_rx;  // TSDispatcher receives requests
-  std::vector<std::string> tsdispatcher_req_tx;  // DataFilter sends requests
+  std::vector<std::string>
+      tsdispatcher_req_rx; // TSDispatcher receives requests
+  std::vector<std::string> tsdispatcher_req_tx; // DataFilter sends requests
 
   // Writer control channels
-  std::vector<std::string> trwriter_ctrl;        // DataFilter -> TRWriter (notify)
-  std::vector<std::string> tswriter_ctrl;        // DataFilter -> TSWriter (notify)
+  std::vector<std::string> trwriter_ctrl; // DataFilter -> TRWriter (notify)
+  std::vector<std::string> tswriter_ctrl; // DataFilter -> TSWriter (notify)
 
   // Tracking channels (for total count signaling)
-  std::vector<std::string> tr_tracking_rx;       // DataFilter receives TR tracking
-  std::vector<std::string> tr_tracking_tx;       // TRDispatcher sends TR tracking
-  std::vector<std::string> ts_tracking_rx;       // DataFilter receives TS tracking
-  std::vector<std::string> ts_tracking_tx;       // TSDispatcher sends TS tracking
+  std::vector<std::string> tr_tracking_rx; // DataFilter receives TR tracking
+  std::vector<std::string> tr_tracking_tx; // TRDispatcher sends TR tracking
+  std::vector<std::string> ts_tracking_rx; // DataFilter receives TS tracking
+  std::vector<std::string> ts_tracking_tx; // TSDispatcher sends TS tracking
 
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------
   // TriggerRecord Data Channels
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------
 
-  std::vector<std::string> tr_data_rx;  // TR inputs (upstream → DataFilter)
-  std::vector<std::string> tr_data_tx;  // TR outputs (DataFilter → downstream)
+  std::vector<std::string> tr_data_rx; // TR inputs (upstream -> DataFilter)
+  std::vector<std::string> tr_data_tx; // TR outputs (DataFilter -> downstream)
 
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------
   // TimeSlice Data Channels
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------
 
-  std::vector<std::string> ts_data_rx;  // TimeSlice inputs (upstream → DataFilter)
-  std::vector<std::string> ts_data_tx;  // TimeSlice outputs (DataFilter → downstream)
+  std::vector<std::string>
+      ts_data_rx; // TimeSlice inputs (upstream -> DataFilter)
+  std::vector<std::string>
+      ts_data_tx; // TimeSlice outputs (DataFilter -> downstream)
 
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------
   // Bookkeeping Channels
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------
 
   std::vector<std::string> bk_outputs;
   std::vector<std::string> bk_inputs;
 
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------
   // Helper Methods
-  // ═══════════════════════════════════════════════════════════════════════════
+  // -----------------------------
 
   /// Check if TriggerRecord inputs are configured
   bool has_tr_inputs() const { return !tr_data_rx.empty(); }

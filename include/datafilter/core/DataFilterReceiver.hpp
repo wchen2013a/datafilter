@@ -99,7 +99,8 @@ private:
   std::mutex m_q;
   std::condition_variable cv_q;
   std::deque<ReceivedTR> tr_q;
-  uint32_t m_total_tr;
+  uint32_t m_total_tr{0};
+  uint32_t m_total_ts{0};
 
 public:
   // Start: register callbacks on all TR inputs (and tracking inputs if enabled)
@@ -154,6 +155,14 @@ public:
                 if (msg.msg_id == "next_tr") {
                   m_total_tr = msg.total_tr;
                   TLOG() << "msg.total_tr =======> " << msg.total_tr;
+                } else if (msg.msg_id == "next_ts") {
+                  m_total_ts = static_cast<uint32_t>(msg.total_tr);
+                  TLOG() << "DataFilterReceiver: next_ts total=" << m_total_ts;
+                  // Reset the once-flag on TSRewriterSink so it sends
+                  // "write_ts" ctrl exactly once for this new TS cycle.
+                  if (organiser && organiser->ts_writer) {
+                    organiser->ts_writer->reset_ctrl_flag();
+                  }
                 } else {
                   organiser->request_next_tr();
                 }
@@ -303,7 +312,16 @@ public:
           const std::size_t bytes = ts ? ts->get_total_size_bytes() : 0;
 
           // Pass through to organiser (no TS algorithm yet)
-          org->accepted_timeslice(ts, m_total_tr);
+          org->accepted_timeslice(ts, m_total_ts);
+
+          // Pull-mode top-up: request next TS batch after each one is forwarded.
+          if (pull_mode && org) {
+            try {
+              org->request_next_ts();
+            } catch (const std::exception &e) {
+              TLOG() << "TS top-up request_next_ts failed: " << e.what();
+            }
+          }
 
           const auto t1 = clock::now();
           const double secs =

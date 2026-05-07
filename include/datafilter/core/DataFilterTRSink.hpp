@@ -84,10 +84,13 @@ struct TRRewriterSink : DataFilterTRSink {
       try {
         dunedaq::datafilter::Handshake h("write_tr");
         h.total_tr = total_tr;
-        m_ctrl_sender->send(std::move(h),
-                            dunedaq::iomanager::Sender::s_no_block);
+        m_ctrl_sender->send(std::move(h), std::chrono::milliseconds(1000));
         TLOG() << "TRRewriterSink: wrote ctrl 'write_tr' to " << ctrl_uid
                << " total_tr=" << total_tr;
+        // Give FRW time to receive ctrl and call add_callback on the kPubSub
+        // TR data channel before we publish.  Without this sleep the TR data
+        // arrives before FRW's subscriber is active and is silently dropped.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
       } catch (const std::exception &e) {
         TLOG() << "TRRewriterSink: ctrl send failed on " << ctrl_uid << " : "
                << e.what();
@@ -162,11 +165,13 @@ private:
 struct DataFilterTSSink {
   virtual ~DataFilterTSSink() = default;
   virtual void send_ts(timeslice_ptr_t &ts, size_t total_ts) = 0;
+  virtual void reset_ctrl_flag() {}
 };
 
 struct TSRewriterSink : DataFilterTSSink {
   Connections cx;
   TransferInfo m_out;
+  std::atomic<bool> m_ts_ctrl_sent{false};
   std::shared_ptr<dunedaq::datafilter::BookkeepingReceiver> m_bk;
 
   explicit TSRewriterSink(Connections conns) : cx(std::move(conns)) {}
@@ -186,6 +191,8 @@ struct TSRewriterSink : DataFilterTSSink {
     m_bk = bk;
   }
 
+  void reset_ctrl_flag() override { m_ts_ctrl_sent.store(false); }
+
   inline void send_ts(timeslice_ptr_t &ts, std::size_t total_ts) override {
     using clock = std::chrono::steady_clock;
     const auto t0 = clock::now();
@@ -198,12 +205,16 @@ struct TSRewriterSink : DataFilterTSSink {
     }
 
     TLOG() << "TSRewriterSink: send TS to FilterResultWriter";
-    if (!cx.tswriter_ctrl.empty()) {
+
+    // Send "write_ts" ctrl exactly once per TS cycle (first TS triggers it).
+    // Uses a 15s timeout so the ctrl can survive FRW's 10s receive_tr wait.
+    if (!m_ts_ctrl_sent.exchange(true) && !cx.tswriter_ctrl.empty()) {
       try {
         dunedaq::datafilter::Handshake h("write_ts");
-        h.total_tr = total_ts;
-        m_ctrl_sender->send(std::move(h),
-                            dunedaq::iomanager::Sender::s_no_block);
+        h.total_tr = static_cast<int>(total_ts);
+        m_ctrl_sender->send(std::move(h), std::chrono::seconds(15));
+        TLOG() << "TSRewriterSink: sent write_ts ctrl total_ts=" << total_ts;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
       } catch (const std::exception &e) {
         TLOG() << "TSRewriterSink: ctrl send failed: " << e.what();
       }

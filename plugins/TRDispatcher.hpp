@@ -43,8 +43,7 @@
 
 using trigger_record_ptr_t =
     std::unique_ptr<dunedaq::daqdataformats::TriggerRecord>;
-using timeslice_ptr_t =
-    std::unique_ptr<dunedaq::daqdataformats::TimeSlice>;
+using timeslice_ptr_t = std::unique_ptr<dunedaq::daqdataformats::TimeSlice>;
 
 using namespace dunedaq::hdf5libs;
 using namespace dunedaq::daqdataformats;
@@ -80,13 +79,15 @@ public:
   explicit TRDispatcher(const std::string &name);
 
   void init(std::shared_ptr<appfwk::ConfigurationManager>) override;
-  void receive(bool is_hdf5file);
+  void receive(DispatchMode mode);
 
   void send_tr_from_hdf5file();
   void send_ts_from_hdf5file();
   void send_tr();
+  void send_ts();
   void get_from_storage();
   trigger_record_ptr_t create_trigger_record(uint64_t trig_num);
+  timeslice_ptr_t create_time_slice(uint64_t ts_num);
   std::vector<std::filesystem::path> get_hdf5files_from_storage();
 
   std::vector<std::shared_ptr<TRDispatcherInfo>> trdispatchers;
@@ -145,7 +146,7 @@ private:
   size_t m_trigger_number;
   size_t m_run_number;
   size_t run_number = 53;
-  size_t fragment_size = 100;
+  size_t fragment_size = 10 * 7200; // 10 WIBEth frames × 7200 B/frame
   size_t element_count_tpc = 4;
   size_t element_count_pds = 4;
   size_t element_count_ta = 4;
@@ -153,8 +154,10 @@ private:
   const size_t components_per_record = element_count_tpc + element_count_pds +
                                        element_count_ta + element_count_tc;
 
+  std::atomic<bool> m_keep_running{false};
   bool m_is_from_storage = false;
   bool m_generate_trigger_record = false;
+  bool m_generate_time_slice = false;
   std::string m_json_file;
   std::string m_input_h5_filename;
   std::string m_output_h5_filename;
@@ -181,6 +184,10 @@ private:
 
   std::atomic<int64_t> m_total_amount{0};
   std::atomic<int> m_amount_since_last_call{0};
+  std::atomic<uint64_t> m_tr_seq_num{0}; // counter for generated TR numbers
+  std::atomic<uint64_t> m_ts_seq_num{0}; // counter for generated TS numbers
+
+  bool m_parallel_send{false}; // set from DAL: mdal->get_parallel_send()
 };
 
 } // namespace dunedaq::datafilter

@@ -139,7 +139,7 @@
 <obj class="DataFilter" id="DataFilter_0">
  <attr name="send_timeout_ms" type="bool" val="1"/>
  <attr name="recv_timeout_ms" type="bool" val="1"/>
- <attr name="adc_threshold" type="u16" val="9170"/>
+ <attr name="adc_threshold" type="u16" val="9130"/>
  <rel name="inputs">
   <ref class="NetworkConnection" id="bookkeeping0"/>
   <ref class="NetworkConnection" id="conn_A0_G0_C0_"/>
@@ -345,7 +345,6 @@
  <attr name="min_free_bytes" type="u64" val="1024"/>
  <rel name="inputs">
   <ref class="NetworkConnection" id="TR_tracking0"/>
-  <ref class="NetworkConnection" id="conn_A0_G0_C0_"/>
   <ref class="NetworkConnection" id="conn_A1_G0_C0_"/>
   <ref class="NetworkConnection" id="bookkeeping1"/>
   <ref class="NetworkConnection" id="trwriter0"/>
@@ -641,7 +640,8 @@
  <attr name="is_from_storage" type="bool" val="1"/>
  <attr name="input_h5_filename" type="string" val="np04hd_run024552_0011_dataflow0_datawriter_0_20240320T143503.hdf5"/>
  <attr name="json_file" type="string" val="hdf5_files_list.json"/>
- <attr name="generate_trigger_record" type="bool" val="0"/>
+ <attr name="generate_trigger_record" type="bool" val="1"/>
+ <attr name="generate_time_slice" type="bool" val="1"/>
  <rel name="inputs">
   <ref class="NetworkConnection" id="TR_tracking0"/>
   <ref class="NetworkConnection" id="trdispatcher0"/>

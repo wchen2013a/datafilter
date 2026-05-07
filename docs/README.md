@@ -14,7 +14,7 @@ Setup the DataFilter first.
 wget https://raw.githubusercontent.com/DUNE-DAQ/datafilter/refs/heads/develop/setup-datafilter.sh
 # The $INSTALL_DIR variable need to be defined before running the script.
 chmod 755 setup-datafilter.sh
-./setup-datafilter.sh /your/path  
+./setup-datafilter.sh /your/installation/path  
 ```
 The script will build the project. Once it is done.
 
@@ -51,6 +51,7 @@ All configuration lives in `test/config/dfSession.data.xml`.
 | `input_h5_filename` | string | `np04hd_run024552_0011_...hdf5` | Single file to process; leave empty to cycle through all files in `json_file` |
 | `json_file` | string | `hdf5_files_list.json` | JSON file tracking which source files have already been processed |
 | `generate_trigger_record` | bool | `0` | `1` = generate synthetic TRs (ignores `is_from_storage` and HDF5 input) |
+| `generate_time_slice` | bool | `0` | `1` = generate synthetic TSs (ignores `is_from_storage` and HDF5 input) |
 | `send_timeout_ms` | u32 | `1000` | Send timeout in ms |
 | `recv_timeout_ms` | u32 | `1000` | Receive timeout in ms |
 
@@ -73,7 +74,7 @@ WIBEth fragments fail the threshold.
 | Threshold range | Effect on `np04hd_run024552_0011` (28 TRs) |
 |---|---|
 | `≤ 9123` | All 28 TRs kept |
-| `9130` | 26 kept, 2 dropped |
+| `9130` | 27 kept, 1 dropped |
 | `9145` | 20 kept, 8 dropped |
 | `≥ 9170` | All 28 TRs dropped |
 

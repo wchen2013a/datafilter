@@ -142,7 +142,8 @@
   <attribute name="is_from_storage" description="This flag allows to force looking hdf5 files from the storage m_storage_pathname." type="bool" init-value="false" is-not-null="yes"/>
   <attribute name="input_h5_filename" description="This is an input hdf5 file prefix. The extension will be hardcoded to hdf5." type="string" is-not-null="yes"/>
   <attribute name="json_file" description="Store a list of hdf5 files that already delivered to the Data Filter. " type="string" is-not-null="yes"/>
-  <attribute name="generate_trigger_record" description="Generate the trigger record for testing only.&#xA;This should be false by default." type="bool" init-value="false" is-not-null="yes"/>
+  <attribute name="generate_trigger_record" description="Generate a trigger record for testing only.&#xA;This should be false by default." type="bool" init-value="false" is-not-null="yes"/>
+  <attribute name="generate_time_slice" description="Generate a TimeSlice for testing only.&#xA;This should be false by default." type="bool" init-value="false" is-not-null="yes"/>
  </class>
 
 </oks-schema>

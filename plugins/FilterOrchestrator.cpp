@@ -136,10 +136,10 @@ void FilterOrchestrator::receive() {
   std::function<void(dunedaq::datafilter::Handshake)> str_receiver_cb =
       [&](dunedaq::datafilter::Handshake msg) {
         TLOG() << "receive() - Callback fired! msg_id: " << msg.msg_id;
-        if (msg.msg_id == "next_tr") {
+        if (msg.msg_id == "next_tr" || msg.msg_id == "next_ts") {
           std::lock_guard<std::mutex> lock(cv_mutex);
           handshake_done = true;
-          TLOG() << "Received next_tr instruction from Data Filter";
+          TLOG() << "Received " << msg.msg_id << " instruction from Data Filter";
         }
       };
 

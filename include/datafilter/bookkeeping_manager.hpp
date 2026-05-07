@@ -133,16 +133,18 @@ struct BookkeepingReceiver {
 
     // Wait for the final TRD BookKeeping (kReRecorded or kWriteFailed)
     // before killing threads. This ensures all 3 expected BK entries
-    // (TRD assigned_to_filter, FRW file_completed, TRD re_recorded/write_failed)
-    // are written even if stop() is called before FRW's write-wait completes.
-    // 10-minute timeout covers any realistic FRW processing time.
+    // (TRD assigned_to_filter, FRW file_completed, TRD
+    // re_recorded/write_failed) are written even if stop() is called before
+    // FRW's write-wait completes. 10-minute timeout covers any realistic
+    // FRW processing time.
     {
       std::unique_lock<std::mutex> lk(all_bk_mutex);
-      bool got_final = all_bk_cv.wait_for(
-          lk, std::chrono::minutes(10),
-          [this] { return all_bk_received.load(std::memory_order_acquire); });
+      bool got_final = all_bk_cv.wait_for(lk, std::chrono::minutes(10), [this] {
+        return all_bk_received.load(std::memory_order_acquire);
+      });
       if (!got_final)
-        TLOG() << "stop(): timed out waiting for final TRD BK — stopping anyway";
+        TLOG() << "stop(): timed out waiting for final TRD BK — "
+                  "stopping anyway";
       else
         TLOG() << "stop(): final TRD BK confirmed, draining queue";
     }
@@ -201,32 +203,34 @@ struct BookkeepingReceiver {
 
 private:
   // Forwards FRW's completion BK to TRD via bookkeeping2 (m_bk_trd_uid).
-  // Translates kFileCompleted → kReRecorded so TRD's existing status check passes.
-  // Preserves from_id="FilterResultWriter" so TRD's from_id check passes unchanged.
+  // Translates kFileCompleted → kReRecorded so TRD's existing status check
+  // passes. Preserves from_id="FilterResultWriter" so TRD's from_id check
+  // passes unchanged.
   void send_completion_to_trd(const dunedaq::datafilter::BookKeeping &frw_bk) {
     if (m_bk_trd_uid.empty()) {
       TLOG() << "send_completion_to_trd: no TRD uid configured, skipping";
       return;
     }
     dunedaq::datafilter::BookKeeping fwd(m_bk_trd_uid);
-    fwd.from_id    = "FilterResultWriter";
+    fwd.from_id = "FilterResultWriter";
     fwd.run_number = frw_bk.run_number;
-    fwd.tr_status  = (frw_bk.tr_status == to_string(TRStatus::kFileCompleted))
-                         ? to_string(TRStatus::kReRecorded)
-                         : to_string(TRStatus::kWriteFailed);
+    fwd.tr_status = (frw_bk.tr_status == to_string(TRStatus::kFileCompleted))
+                        ? to_string(TRStatus::kReRecorded)
+                        : to_string(TRStatus::kWriteFailed);
     fwd.tr_header_info = frw_bk.tr_header_info;
 
     auto sender =
         dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(m_bk_trd_uid);
     if (!sender) {
-      TLOG() << "send_completion_to_trd: failed to get sender for " << m_bk_trd_uid;
+      TLOG() << "send_completion_to_trd: failed to get sender for "
+             << m_bk_trd_uid;
       return;
     }
     try {
       sender->send(std::move(fwd), std::chrono::milliseconds(2000));
       TLOG() << "BookkeepingReceiver: forwarded FRW completion ("
-             << frw_bk.tr_status << " -> " << fwd.tr_status
-             << ") to TRD via " << m_bk_trd_uid;
+             << frw_bk.tr_status << " -> " << fwd.tr_status << ") to TRD via "
+             << m_bk_trd_uid;
     } catch (const std::exception &e) {
       TLOG() << "send_completion_to_trd failed: " << e.what();
     }
@@ -235,10 +239,13 @@ private:
   void send_bk(dunedaq::datafilter::BookKeeping bk_info) {
     TLOG() << "Send bookkeeping info to FilterResultWriter";
 
-    const std::string tx_uid =
-        m_bk_tx_uid.empty() ? "bookkeeping1" : m_bk_tx_uid;
+    if (m_bk_tx_uid.empty()) {
+      TLOG() << "send_bk: m_bk_tx_uid not configured — OKS topology "
+                "error, skipping send";
+      return;
+    }
     m_bk_sender =
-        dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(tx_uid);
+        dunedaq::get_iom_sender<dunedaq::datafilter::BookKeeping>(m_bk_tx_uid);
 
     if (!m_bk_sender) {
       TLOG() << "Failed to get bookkeeping sender!";
@@ -257,14 +264,17 @@ private:
   void receive_bk() {
     TLOG() << "Setting up bookkeeping receiver";
 
-    const std::string rx_uid =
-        m_bk_rx_uid.empty() ? "bookkeeping0" : m_bk_rx_uid;
-
-    TLOG() << "BK: attempting to bind receiver on uid=" << rx_uid
+    if (m_bk_rx_uid.empty()) {
+      TLOG() << "receive_bk: m_bk_rx_uid not configured — OKS topology "
+                "error, skipping receiver setup";
+      return;
+    }
+    TLOG() << "BK: attempting to bind receiver on uid=" << m_bk_rx_uid
            << " type=BookKeeping";
 
     auto cb_receiver =
-        dunedaq::get_iom_receiver<dunedaq::datafilter::BookKeeping>(rx_uid);
+        dunedaq::get_iom_receiver<dunedaq::datafilter::BookKeeping>(
+            m_bk_rx_uid);
     if (!cb_receiver) {
       TLOG() << "Failed to get bookkeeping receiver";
       return;
@@ -297,7 +307,8 @@ private:
           bk.tr_status == to_string(TRStatus::kAssignedToFilter)) {
         received_cnt.store(0, std::memory_order_relaxed);
         all_bk_received.store(false, std::memory_order_release);
-        TLOG() << "New pipeline cycle detected — resetting per-cycle counters";
+        TLOG() << "New pipeline cycle detected — resetting per-cycle "
+                  "counters";
       }
 
       unsigned int cnt = ++received_cnt;
@@ -314,9 +325,10 @@ private:
           file_index = it->second;
         }
 
-        // send_bk() forwards initial BK to FRW if a BK output is configured.
-        // Guard with try-catch so that a missing/unconfigured output does not
-        // throw past this point and skip run_info.set() and queuing below.
+        // send_bk() forwards initial BK to FRW if a BK output is
+        // configured. Guard with try-catch so that a
+        // missing/unconfigured output does not throw past this point
+        // and skip run_info.set() and queuing below.
         if (!m_bk_tx_uid.empty()) {
           try {
             send_bk(bk);
@@ -357,17 +369,18 @@ private:
       }
       queue_cv.notify_one();
 
-      // When FRW signals file completion (kFileCompleted or kWriteFailed),
-      // forward a translated confirmation to TRD via bookkeeping2.
-      // DataFilter is the intermediary — FRW no longer sends directly to TRD.
+      // When FRW signals file completion (kFileCompleted or
+      // kWriteFailed), forward a translated confirmation to TRD via
+      // bookkeeping2. DataFilter is the intermediary — FRW no longer
+      // sends directly to TRD.
       if (is_from_writer &&
           (bk.tr_status == to_string(TRStatus::kFileCompleted) ||
            bk.tr_status == to_string(TRStatus::kWriteFailed))) {
         send_completion_to_trd(bk);
       }
 
-      // Detect TRD's final BK (kReRecorded or kWriteFailed) — sent after TRD
-      // receives the forwarded completion and calls WriteJSON.
+      // Detect TRD's final BK (kReRecorded or kWriteFailed) — sent after
+      // TRD receives the forwarded completion and calls WriteJSON.
       // Signals stop() to unblock and drain cleanly.
       if (is_from_trdisp &&
           (bk.tr_status == to_string(TRStatus::kReRecorded) ||
@@ -462,7 +475,8 @@ private:
         out_file = bk_file;
       }
       if (!have_file.load(std::memory_order_acquire)) {
-        // No filename yet — return items to queue rather than losing them.
+        // No filename yet — return items to queue rather than losing
+        // them.
         {
           std::lock_guard<std::mutex> rl(queue_mutex);
           for (auto &item : batch)

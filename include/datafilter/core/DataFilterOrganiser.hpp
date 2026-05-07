@@ -110,6 +110,24 @@ struct DataFilterOrganiser {
     writer->send_tr(tr, total_tr);
   }
 
+  // Send ONE "next_ts" request to every configured TRDispatcher control UID.
+  inline void request_next_ts() {
+    if (cx.trdispatcher_req_tx.empty()) {
+      TLOG() << "Organiser::request_next_ts(): no dispatcher request endpoints configured";
+      return;
+    }
+    for (const auto &uid : cx.trdispatcher_req_tx) {
+      try {
+        auto s = dunedaq::get_iom_sender<dunedaq::datafilter::Handshake>(uid);
+        dunedaq::datafilter::Handshake msg("next_ts");
+        s->send(std::move(msg), std::chrono::milliseconds(500));
+        TLOG() << "Organiser::request_next_ts() sent to FilterOrchestrator with uid " << uid;
+      } catch (const std::exception &e) {
+        TLOG() << "Organiser::request_next_ts() failed on " << uid << " : " << e.what();
+      }
+    }
+  }
+
   // Forward a TS to the configured TS sink.
   inline void accepted_timeslice(timeslice_ptr_t &ts,
                                  std::size_t total_ts) {

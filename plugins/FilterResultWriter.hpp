@@ -40,6 +40,7 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
 
 using namespace dunedaq::iomanager;
@@ -47,8 +48,7 @@ using namespace dunedaq::hdf5libs;
 using dataobj_t = nlohmann::json;
 using trigger_record_ptr_t =
     std::unique_ptr<dunedaq::daqdataformats::TriggerRecord>;
-using timeslice_ptr_t =
-    std::unique_ptr<dunedaq::daqdataformats::TimeSlice>;
+using timeslice_ptr_t = std::unique_ptr<dunedaq::daqdataformats::TimeSlice>;
 
 namespace dunedaq::datafilter {
 
@@ -84,7 +84,6 @@ public:
   std::string generate_hdf5file_pathname(std::string file_pathname_prefix,
                                          int run_number, int file_index,
                                          int trigger_number);
-  void receive_tr();
   void receive_tr_single_connection();
   void receive_ts_single_connection();
   void send_next_tr();
@@ -116,11 +115,9 @@ private:
   void do_conf(const data_t &);
   void do_start(const data_t &);
   void do_stop(const data_t &);
-  void do_work(std::atomic<bool> &running);
   void receive_attrs(std::atomic<bool> &running);
 
   // Threading
-  dunedaq::utilities::WorkerThread m_thread;
   dunedaq::utilities::WorkerThread m_bk_thread;
 
   std::shared_ptr<dunedaq::conffwk::Configuration> m_confdb;
@@ -143,7 +140,7 @@ private:
   std::string m_session_name = "test-session";
   size_t m_trigger_timestamp;
   size_t m_trigger_number;
-  size_t m_run_number;
+  std::atomic<size_t> m_run_number{0};
   std::atomic<size_t> m_num_messages{0};
   std::string m_info_file_base = "FilterResultWriter";
   std::string m_odir;
@@ -160,12 +157,35 @@ private:
   std::atomic<int64_t> m_total_amount{0};
   std::atomic<int> m_amount_since_last_call{0};
 
-  // Gate: do_start() waits here until DF signals a new dispatch via bookkeeping1.
-  // Prevents receive_tr_single_connection() from looping and sending repeated
-  // kFileCompleted messages when there is no active pipeline cycle.
+  // Gate: do_start() waits here until DF signals a new dispatch via
+  // bookkeeping1. Prevents receive_tr_single_connection() from looping and
+  // sending repeated kFileCompleted messages when there is no active pipeline
+  // cycle.
   std::atomic<bool> m_dispatch_ready{false};
   std::mutex m_dispatch_mutex;
   std::condition_variable m_dispatch_cv;
+
+  std::atomic<bool> m_running{false};
+
+  // Pre-subscription buffers: always-on callbacks so data/control messages are
+  // never dropped between remove_callback() of cycle N and add_callback() of
+  // cycle N+1 (applies to both kPubSub data and kSendRecv ctrl handshakes).
+  std::queue<timeslice_ptr_t> m_ts_prebuf;
+  std::mutex m_ts_prebuf_mtx;
+  std::condition_variable m_ts_prebuf_cv;
+  std::queue<trigger_record_ptr_t> m_tr_prebuf;
+  std::mutex m_tr_prebuf_mtx;
+  std::condition_variable m_tr_prebuf_cv;
+  std::shared_ptr<ReceiverConcept<timeslice_ptr_t>> m_ts_prebuf_rx;
+  std::shared_ptr<ReceiverConcept<trigger_record_ptr_t>> m_tr_prebuf_rx;
+
+  // Pre-buffer for write_tr control handshake on trwriter_ctrl (kSendRecv).
+  // Registered once before the dispatch loop; receive_tr_single_connection()
+  // drains from this queue instead of registering a transient callback.
+  std::queue<dunedaq::datafilter::Handshake> m_write_tr_prebuf;
+  std::mutex m_write_tr_prebuf_mtx;
+  std::condition_variable m_write_tr_prebuf_cv;
+  std::shared_ptr<ReceiverConcept<dunedaq::datafilter::Handshake>> m_write_tr_ctrl_rx;
 
   // for testing only, not used and to be removed.
   std::thread m_attrs_test_thread;

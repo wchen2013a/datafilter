@@ -28,25 +28,6 @@ find_package(okssystem REQUIRED)
 find_package(conffwk REQUIRED)
 find_package(Boost COMPONENTS iostreams unit_test_framework REQUIRED)
 
-
-
-# daq_add_library(NAME datafilter_core
-#   SOURCES
-#     src/core/DataFilterOrganiser.cpp
-#     src/core/SimpleMultiInputReceiver.cpp
-#   PUBLIC_HEADERS
-#     include/datafilter/core/Connections.hpp
-#     include/datafilter/core/ConnectionsBuilder.hpp
-#     include/datafilter/core/ITriggerRecordSink.hpp
-#     include/datafilter/core/ProvisionalTRWriterSink.hpp
-#     include/datafilter/core/DataFilterOrganiser.hpp
-#     include/datafilter/core/SimpleMultiInputReceiver.hpp
-#   LINK_LIBRARIES
-#     iomanager::iomanager
-#     logging::logging
-#     daqdataformats::daqdataformats
-# )
-
 #find_package(pybind11_json ${pybind11_json_REQUIRED_VERSION} REQUIRED)
 include_directories(src/exts/nlohmann_json/include)
 
