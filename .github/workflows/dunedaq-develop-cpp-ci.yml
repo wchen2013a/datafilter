@@ -197,21 +197,29 @@ jobs:
           }
           trap cleanup EXIT
           
-          # Start the apps in background
+          # Start the apps in background from test/apps directory
+          APPS_DIR="${PWD}/sourcecode/datafilter/test/apps"
+          cd "${APPS_DIR}"
+          echo "Running apps from: ${APPS_DIR}"
+          
           echo "Starting TRDispatcher..."
-          trdispatcher -n TRDispatcher_0 -s test-session -x ${OKS_CONFIG} > trd.log 2>&1 &
+          # trdispatcher -n TRDispatcher_0 -s test-session -x ${OKS_CONFIG} > trd.log 2>&1 &
+          trdispatcher > trd.log 2>&1 &
           TRD_PID=$!
           
           echo "Starting FilterOrchestrator..."
-          filterorchestrator -n FilterOrchestrator_0 -s test-session -x ${OKS_CONFIG} > fo.log 2>&1 &
+          #filterorchestrator -n FilterOrchestrator_0 -s test-session -x ${OKS_CONFIG} > fo.log 2>&1 &
+          filterorchestrator > fo.log 2>&1 &
           FO_PID=$!
           
           echo "Starting DataFilter..."
-          datafilter2 -n DataFilter_0 -s test-session -x ${OKS_CONFIG} > df.log 2>&1 &
+          # datafilter2 -n DataFilter_0 -s test-session -x ${OKS_CONFIG} > df.log 2>&1 &
+          datafilter2 > df.log 2>&1 &
           DF_PID=$!
           
           echo "Starting FilterResultWriter..."
-          filterresultwriter -n FilterResultWriter_0 -s test-session -x ${OKS_CONFIG} > frw.log 2>&1 &
+          # filterresultwriter -n FilterResultWriter_0 -s test-session -x ${OKS_CONFIG} > frw.log 2>&1 &
+          filterresultwriter > frw.log 2>&1 &
           FRW_PID=$!
           
           echo "All apps started. PIDs: TRD=$TRD_PID FO=$FO_PID DF=$DF_PID FRW=$FRW_PID"
@@ -237,13 +245,13 @@ jobs:
           
           echo "TIMEOUT: Only found ${H5_COUNT} hdf5 files after ${MAX_WAIT}s"
           echo "=== TRDispatcher log ==="
-          cat trd.log 2>/dev/null || true
+          cat "${APPS_DIR}/trd.log" 2>/dev/null || true
           echo "=== FilterOrchestrator log ==="
-          cat fo.log 2>/dev/null || true
+          cat "${APPS_DIR}/fo.log" 2>/dev/null || true
           echo "=== DataFilter log ==="
-          cat df.log 2>/dev/null || true
+          cat "${APPS_DIR}/df.log" 2>/dev/null || true
           echo "=== FilterResultWriter log ==="
-          cat frw.log 2>/dev/null || true
+          cat "${APPS_DIR}/frw.log" 2>/dev/null || true
           exit 1
         continue-on-error: true
       
