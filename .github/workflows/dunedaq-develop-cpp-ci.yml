@@ -1,3 +1,5 @@
+
+ 
 name: build-develop-datafilter-alma9
 
 on:
@@ -151,11 +153,93 @@ jobs:
           cd /__w/datafilter/datafilter/test-area
           source env.sh
           dbt-workarea-env
-          which trdispatcher
-          which filterorchestrator
-          which datafilter2
-          which filterresultwriter
-        continue-on-error: true
+          
+          # Extract paths from OKS config
+          CONFIG_XML="${PWD}/sourcecode/datafilter/test/config/dfSession.data.xml"
+          
+          # Replace output directory and input directory with work area using sed
+          WORK_AREA="${PWD}"
+          sed -i "s|/lcg/storage18/dune/chen|${WORK_AREA}/output|g" "${CONFIG_XML}"
+          sed -i "s|/lcg/storage19/test-area/dune/trigger_records/sourcehdf5|${WORK_AREA}/input|g" "${CONFIG_XML}"
+          echo "Updated config - odir now points to: ${WORK_AREA}/output"
+          echo "Updated config - storage_pathname now points to: ${WORK_AREA}/input"
+          
+          # Get output directory (odir from FilterResultWriter) - search within 10 lines after class match
+          OUTPUT_DIR=$(grep -A10 'obj class="FilterResultWriter"' "${CONFIG_XML}" | grep 'name="odir"' | grep -oP 'val="\K[^"]+')
+          echo "Output directory from config: ${OUTPUT_DIR}"
+          
+          # Get input directory (storage_pathname from TRDispatcher) - search within 10 lines after class match
+          INPUT_DIR=$(grep -A10 'obj class="TRDispatcher"' "${CONFIG_XML}" | grep 'name="storage_pathname"' | grep -oP 'val="\K[^"]+')
+          echo "Input directory from config: ${INPUT_DIR}"
+          
+          # Create directories
+          mkdir -p "${OUTPUT_DIR}"
+          mkdir -p "${INPUT_DIR}"
+          
+          # Set OKS config path
+          OKS_CONFIG="${CONFIG_XML}"
+          
+          # Function to cleanup processes
+          cleanup() {
+            echo "Cleaning up processes..."
+            pkill -TERM -f "trdispatcher|filterorchestrator|datafilter2|filterresultwriter" || true
+            sleep 2
+            pkill -KILL -f "trdispatcher|filterorchestrator|datafilter2|filterresultwriter" || true
+          }
+          trap cleanup EXIT
+          
+          # Start the apps in background from test/apps directory
+          APPS_DIR="${PWD}/sourcecode/datafilter/test/apps"
+          cd "${APPS_DIR}"
+          echo "Running apps from: ${APPS_DIR}"
+          
+          echo "Starting TRDispatcher..."
+          trdispatcher -n TRDispatcher_0 -s test-session -x ${OKS_CONFIG} > trd.log 2>&1 &
+          TRD_PID=$!
+          
+          echo "Starting FilterOrchestrator..."
+          filterorchestrator -n FilterOrchestrator_0 -s test-session -x ${OKS_CONFIG} > fo.log 2>&1 &
+          FO_PID=$!
+          
+          echo "Starting DataFilter..."
+          datafilter2 -n DataFilter_0 -s test-session -x ${OKS_CONFIG} > df.log 2>&1 &
+          DF_PID=$!
+          
+          echo "Starting FilterResultWriter..."
+          filterresultwriter -n FilterResultWriter_0 -s test-session -x ${OKS_CONFIG} > frw.log 2>&1 &
+          FRW_PID=$!
+          
+          echo "All apps started. PIDs: TRD=$TRD_PID FO=$FO_PID DF=$DF_PID FRW=$FRW_PID"
+          
+          # Wait for hdf5 files in output directory (up to 5 minutes)
+          MAX_WAIT=300
+          INTERVAL=10
+          ELAPSED=0
+          
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            H5_COUNT=$(find "${OUTPUT_DIR}" -name "*.hdf5" 2>/dev/null | wc -l)
+            echo "Elapsed: ${ELAPSED}s, HDF5 files found: ${H5_COUNT}"
+            
+            if [ ${H5_COUNT} -ge 5 ]; then
+              echo "SUCCESS: Found ${H5_COUNT} hdf5 files (>=5 required)"
+              find "${OUTPUT_DIR}" -name "*.hdf5" 2>/dev/null
+              exit 0
+            fi
+            
+            sleep ${INTERVAL}
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          
+          echo "TIMEOUT: Only found ${H5_COUNT} hdf5 files after ${MAX_WAIT}s"
+          echo "=== TRDispatcher log ==="
+          cat "${APPS_DIR}/trd.log" 2>/dev/null || true
+          echo "=== FilterOrchestrator log ==="
+          cat "${APPS_DIR}/fo.log" 2>/dev/null || true
+          echo "=== DataFilter log ==="
+          cat "${APPS_DIR}/df.log" 2>/dev/null || true
+          echo "=== FilterResultWriter log ==="
+          cat "${APPS_DIR}/frw.log" 2>/dev/null || true
+          exit 1
 
       - name: Integration test - run apps and check hdf5 output
         run: |
