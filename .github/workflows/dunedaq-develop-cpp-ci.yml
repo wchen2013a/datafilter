@@ -337,7 +337,7 @@ jobs:
           echo "=== FilterResultWriter log ==="
           cat "${APPS_DIR}/frw.log" 2>/dev/null || true
           exit 1
-        continue-on-error: true
+        continue-on-error: false
       
       - name: Continuous Testing
         if: ${{ github.event.inputs.enable_continuous_test == 'true' }}
