@@ -166,6 +166,13 @@ jobs:
           # Extract paths from OKS config
           CONFIG_XML="${PWD}/sourcecode/datafilter/test/config/dfSession.data.xml"
           
+          # Replace output directory and input directory with work area using sed
+          WORK_AREA="${PWD}"
+          sed -i "s|/lcg/storage18/dune/chen|${WORK_AREA}/output|g" "${CONFIG_XML}"
+          sed -i "s|/lcg/storage19/test-area/dune/trigger_records/sourcehdf5|${WORK_AREA}/input|g" "${CONFIG_XML}"
+          echo "Updated config - odir now points to: ${WORK_AREA}/output"
+          echo "Updated config - storage_pathname now points to: ${WORK_AREA}/input"
+          
           # Get output directory (odir from FilterResultWriter) - search within 10 lines after class match
           OUTPUT_DIR=$(grep -A10 'obj class="FilterResultWriter"' "${CONFIG_XML}" | grep 'name="odir"' | grep -oP 'val="\K[^"]+')
           echo "Output directory from config: ${OUTPUT_DIR}"
