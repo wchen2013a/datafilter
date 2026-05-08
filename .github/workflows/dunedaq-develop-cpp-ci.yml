@@ -194,19 +194,19 @@ jobs:
           echo "Running apps from: ${APPS_DIR}"
           
           echo "Starting TRDispatcher..."
-          trdispatcher -n TRDispatcher_0 -s test-session -x ${OKS_CONFIG} > trd.log 2>&1 &
+          trdispatcher  > trd.log 2>&1 &
           TRD_PID=$!
           
           echo "Starting FilterOrchestrator..."
-          filterorchestrator -n FilterOrchestrator_0 -s test-session -x ${OKS_CONFIG} > fo.log 2>&1 &
+          filterorchestrator  > fo.log 2>&1 &
           FO_PID=$!
           
           echo "Starting DataFilter..."
-          datafilter2 -n DataFilter_0 -s test-session -x ${OKS_CONFIG} > df.log 2>&1 &
+          datafilter2  > df.log 2>&1 &
           DF_PID=$!
           
           echo "Starting FilterResultWriter..."
-          filterresultwriter -n FilterResultWriter_0 -s test-session -x ${OKS_CONFIG} > frw.log 2>&1 &
+          filterresultwriter  > frw.log 2>&1 &
           FRW_PID=$!
           
           echo "All apps started. PIDs: TRD=$TRD_PID FO=$FO_PID DF=$DF_PID FRW=$FRW_PID"
